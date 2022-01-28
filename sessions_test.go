@@ -191,12 +191,13 @@ func TestStop(t *testing.T) {
 
 func TestRefresh(t *testing.T) {
 	testCases := []struct {
-		when    string
-		current string
-		err     error
-		access  *http.Cookie
-		refresh *http.Cookie
-		initSS  initSessionStoreMock
+		when     string
+		current  string
+		err      error
+		access   *http.Cookie
+		refresh  *http.Cookie
+		redirect bool
+		initSS   initSessionStoreMock
 	}{
 		{
 			when:    "Нет cookie с сессией",
@@ -246,11 +247,12 @@ func TestRefresh(t *testing.T) {
 			},
 		},
 		{
-			when:    "Если все корректно",
-			current: "session=123456",
-			err:     nil,
-			access:  &http.Cookie{MaxAge: 300},
-			refresh: &http.Cookie{MaxAge: 600},
+			when:     "Если все корректно",
+			current:  "session=123456",
+			err:      nil,
+			access:   &http.Cookie{MaxAge: 300},
+			refresh:  &http.Cookie{MaxAge: 600},
+			redirect: true,
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",
@@ -269,7 +271,7 @@ func TestRefresh(t *testing.T) {
 	for _, tc := range testCases {
 		t.Log(tc.when)
 
-		req := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		req.Header.Set(echo.HeaderCookie, tc.current)
 		rec := httptest.NewRecorder()
@@ -285,6 +287,9 @@ func TestRefresh(t *testing.T) {
 		}
 
 		c := e.NewContext(req, rec)
+		c.SetPath("/auth/refresh/:uri")
+		c.SetParamNames("uri")
+		c.SetParamValues("api/v2")
 
 		err := h.Refresh(c)
 
@@ -313,6 +318,11 @@ func TestRefresh(t *testing.T) {
 			if assert.NotNil(t, rc, "Отсутствует cookie с access-токеном") {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
 			}
+		}
+
+		if tc.redirect {
+			assert.Equal(t, http.StatusTemporaryRedirect, rec.Code, "Некорректный http-статус ответа")
+			assert.Equal(t, "/api/v2", rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
 		}
 	}
 }

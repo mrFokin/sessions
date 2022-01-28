@@ -95,7 +95,13 @@ func (s *sessions) Refresh(c echo.Context) error {
 
 	// TODO Проверить Device
 
-	return s.start(c, current.Claims)
+	err = s.start(c, current.Claims)
+	if err != nil {
+		return err
+	}
+
+	uri := "/" + c.Param("uri")
+	return c.Redirect(http.StatusTemporaryRedirect, uri)
 }
 
 func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
