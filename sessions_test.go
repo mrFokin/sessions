@@ -39,6 +39,7 @@ func TestStart(t *testing.T) {
 		when    string
 		current string
 		err     error
+		secure  bool
 		access  *http.Cookie
 		refresh *http.Cookie
 		initSS  initSessionStoreMock
@@ -52,11 +53,24 @@ func TestStart(t *testing.T) {
 			},
 		},
 		{
-			when:    "Если все корректно",
+			when:    "Если все корректно при отладке (несекурная кука)",
 			current: "session=123456",
 			err:     nil,
-			access:  &http.Cookie{MaxAge: 300},
-			refresh: &http.Cookie{MaxAge: 600},
+			secure:  false,
+			access:  &http.Cookie{MaxAge: 300, Secure: false},
+			refresh: &http.Cookie{MaxAge: 600, Secure: false},
+			initSS: func(m *mockSessionStore) {
+				m.On("Delete", "123456").Return(nil)
+				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
+		{
+			when:    "Если все корректно в проде (секурная кука)",
+			current: "session=123456",
+			err:     nil,
+			secure:  true,
+			access:  &http.Cookie{MaxAge: 300, Secure: true},
+			refresh: &http.Cookie{MaxAge: 600, Secure: true},
 			initSS: func(m *mockSessionStore) {
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
@@ -77,12 +91,7 @@ func TestStart(t *testing.T) {
 		mSessionStore := &mockSessionStore{}
 		tc.initSS(mSessionStore)
 
-		h := sessions{
-			Secret:         []byte("secret"),
-			AccessTimeout:  time.Minute * 5,
-			RefreshTimeout: time.Minute * 10,
-			Store:          mSessionStore,
-		}
+		h := New([]byte("secret"), time.Minute*5, time.Minute*10, tc.secure, mSessionStore)
 
 		c := e.NewContext(req, rec)
 
@@ -108,12 +117,14 @@ func TestStart(t *testing.T) {
 		if tc.access != nil {
 			if assert.NotNil(t, ac, "Отсутствует cookie с access-токеном") {
 				assert.Equal(t, tc.access.MaxAge, ac.MaxAge)
+				assert.Equal(t, tc.access.Secure, ac.Secure)
 			}
 		}
 
 		if tc.refresh != nil {
-			if assert.NotNil(t, rc, "Отсутствует cookie с access-токеном") {
+			if assert.NotNil(t, rc, "Отсутствует cookie с refresh-токеном") {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
+				assert.Equal(t, tc.refresh.Secure, rc.Secure)
 			}
 		}
 	}
@@ -181,10 +192,12 @@ func TestStop(t *testing.T) {
 
 		if assert.NotNil(t, ac, "Отсутствует cookie с access-токеном") {
 			assert.Equal(t, -1, ac.MaxAge)
+			assert.Equal(t, false, ac.Secure)
 		}
 
-		if assert.NotNil(t, rc, "Отсутствует cookie с access-токеном") {
+		if assert.NotNil(t, rc, "Отсутствует cookie с refresh-токеном") {
 			assert.Equal(t, -1, rc.MaxAge)
+			assert.Equal(t, false, rc.Secure)
 		}
 	}
 }
@@ -217,8 +230,8 @@ func TestRefresh(t *testing.T) {
 			when:    "Если сессия истекла",
 			current: "session=123456",
 			err:     echo.ErrUnauthorized,
-			access:  &http.Cookie{MaxAge: -1},
-			refresh: &http.Cookie{MaxAge: -1},
+			access:  &http.Cookie{MaxAge: -1, Secure: true},
+			refresh: &http.Cookie{MaxAge: -1, Secure: true},
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",
@@ -233,8 +246,8 @@ func TestRefresh(t *testing.T) {
 			when:    "Если текушая сессия не истекла, но SessionStore.Create вернул неизвестную ошибку",
 			current: "session=123456",
 			err:     errors.New("Unknown errror"),
-			access:  &http.Cookie{MaxAge: -1},
-			refresh: &http.Cookie{MaxAge: -1},
+			access:  &http.Cookie{MaxAge: -1, Secure: true},
+			refresh: &http.Cookie{MaxAge: -1, Secure: true},
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",
@@ -250,8 +263,8 @@ func TestRefresh(t *testing.T) {
 			when:     "Если все корректно",
 			current:  "session=123456",
 			err:      nil,
-			access:   &http.Cookie{MaxAge: 300},
-			refresh:  &http.Cookie{MaxAge: 600},
+			access:   &http.Cookie{MaxAge: 300, Secure: true},
+			refresh:  &http.Cookie{MaxAge: 600, Secure: true},
 			redirect: true,
 			initSS: func(m *mockSessionStore) {
 				s := Session{
@@ -279,12 +292,7 @@ func TestRefresh(t *testing.T) {
 		mSessionStore := &mockSessionStore{}
 		tc.initSS(mSessionStore)
 
-		h := sessions{
-			Secret:         []byte("secret"),
-			AccessTimeout:  time.Minute * 5,
-			RefreshTimeout: time.Minute * 10,
-			Store:          mSessionStore,
-		}
+		h := New([]byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
 
 		c := e.NewContext(req, rec)
 		c.SetPath("/auth/refresh/:uri")
@@ -311,12 +319,14 @@ func TestRefresh(t *testing.T) {
 		if tc.access != nil {
 			if assert.NotNil(t, ac, "Отсутствует cookie с access-токеном") {
 				assert.Equal(t, tc.access.MaxAge, ac.MaxAge)
+				assert.Equal(t, tc.access.Secure, ac.Secure)
 			}
 		}
 
 		if tc.refresh != nil {
-			if assert.NotNil(t, rc, "Отсутствует cookie с access-токеном") {
+			if assert.NotNil(t, rc, "Отсутствует cookie с refresh-токеном") {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
+				assert.Equal(t, tc.refresh.Secure, rc.Secure)
 			}
 		}
 

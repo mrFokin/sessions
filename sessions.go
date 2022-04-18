@@ -34,11 +34,12 @@ type Session struct {
 	Expired time.Time
 }
 
-func New(secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, store SessionStore) Sessions {
+func New(secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions {
 	return &sessions{
 		Secret:         secret,
 		AccessTimeout:  accessTimeout,
 		RefreshTimeout: refreshTimeout,
+		Secure:         secure,
 		Store:          store,
 	}
 }
@@ -47,6 +48,7 @@ type sessions struct {
 	Secret         []byte
 	AccessTimeout  time.Duration
 	RefreshTimeout time.Duration
+	Secure         bool
 	Store          SessionStore
 }
 
@@ -141,7 +143,7 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 		Domain:   c.Request().Host,
 		Path:     "/auth",
 		HttpOnly: true,
-		Secure:   c.Request().Host != "localhost",
+		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -153,7 +155,7 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 		Domain:   c.Request().Host,
 		Path:     "/",
 		HttpOnly: false,
-		Secure:   c.Request().Host != "localhost",
+		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -167,7 +169,7 @@ func (s *sessions) clearCookies(c echo.Context) {
 		Domain:   c.Request().Host,
 		Path:     "/auth",
 		HttpOnly: true,
-		Secure:   c.Request().Host != "localhost",
+		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -179,7 +181,7 @@ func (s *sessions) clearCookies(c echo.Context) {
 		Domain:   c.Request().Host,
 		Path:     "/",
 		HttpOnly: false,
-		Secure:   c.Request().Host != "localhost",
+		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
