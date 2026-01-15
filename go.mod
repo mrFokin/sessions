@@ -3,7 +3,6 @@ module github.com/mrFokin/sessions
 go 1.24.0
 
 require (
-	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.3.0
 	github.com/labstack/echo-jwt/v4 v4.4.0
