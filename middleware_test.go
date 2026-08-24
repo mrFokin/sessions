@@ -20,30 +20,38 @@ func TestJWTWithRedirect(t *testing.T) {
 	testCases := []struct {
 		when     string
 		current  string
+		path     string
 		err      error
 		redirect bool
 		claims   *mockClaims
 	}{
 		{
 			when:     "Нет cookie с access-токеном",
+			path:     "/auth/refresh",
 			redirect: true,
 		},
 		{
 			when:    "Все в порядке",
+			path:    "/auth/refresh",
 			current: "access=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJOYW1lIjoiSmhvbiBEb2UifQ.hsShW3pRWuxeYtxaXf-igfnhexKQzoJqEl5zFjKyWl4",
 			err:     nil,
 			claims:  &mockClaims{Name: "Jhon Doe"},
+		},
+		{
+			when:     "Нет cookie с access-токеном и есть префикс /api",
+			path:     "/api/auth/refresh",
+			redirect: true,
 		},
 	}
 
 	e := echo.New()
 
-	h := JWTWithRedirect("/auth/refresh", []byte("secret"), jwt.MapClaims{})(func(c echo.Context) error {
-		return c.String(http.StatusOK, "test")
-	})
-
 	for _, tc := range testCases {
 		t.Log(tc.when)
+
+		h := JWTWithRedirect(tc.path, []byte("secret"), jwt.MapClaims{})(func(c echo.Context) error {
+			return c.String(http.StatusOK, "test")
+		})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v2", nil)
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -63,7 +71,8 @@ func TestJWTWithRedirect(t *testing.T) {
 
 		if tc.redirect {
 			assert.Equal(t, http.StatusTemporaryRedirect, rec.Code, "Некорректный http-статус ответа")
-			assert.Equal(t, "/auth/refresh/api/v2", rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
+			expectedLocation := tc.path + "/api/v2"
+			assert.Equal(t, expectedLocation, rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
 		} else {
 			if tc.claims != nil {
 				token := c.Get("user").(*jwt.Token)

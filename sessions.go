@@ -1,12 +1,17 @@
 package sessions
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+)
+
+var (
+	ErrSessionNotFound = errors.New("session not found")
 )
 
 type Sessions interface {
@@ -34,8 +39,9 @@ type Session struct {
 	Expired time.Time
 }
 
-func New(secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions {
+func New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions {
 	return &sessions{
+		Prefix:         prefix,
 		Secret:         secret,
 		AccessTimeout:  accessTimeout,
 		RefreshTimeout: refreshTimeout,
@@ -45,6 +51,7 @@ func New(secret []byte, accessTimeout time.Duration, refreshTimeout time.Duratio
 }
 
 type sessions struct {
+	Prefix         string
 	Secret         []byte
 	AccessTimeout  time.Duration
 	RefreshTimeout time.Duration
@@ -135,13 +142,19 @@ func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
 }
 
 func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken string) {
+	sessionPath := s.Prefix + "/auth"
+	accessPath := s.Prefix
+	if accessPath == "" {
+		accessPath = "/"
+	}
+
 	c.SetCookie(&http.Cookie{
 		Name:     "session",
 		Value:    refreshToken,
 		MaxAge:   int(s.RefreshTimeout.Seconds()),
 		Expires:  time.Now().Add(s.RefreshTimeout),
 		Domain:   c.Request().Host,
-		Path:     "/auth",
+		Path:     sessionPath,
 		HttpOnly: true,
 		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
@@ -153,7 +166,7 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 		MaxAge:   int(s.AccessTimeout.Seconds()),
 		Expires:  time.Now().Add(s.AccessTimeout),
 		Domain:   c.Request().Host,
-		Path:     "/",
+		Path:     accessPath,
 		HttpOnly: false,
 		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
@@ -161,13 +174,19 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 }
 
 func (s *sessions) clearCookies(c echo.Context) {
+	sessionPath := s.Prefix + "/auth"
+	accessPath := s.Prefix
+	if accessPath == "" {
+		accessPath = "/"
+	}
+
 	c.SetCookie(&http.Cookie{
 		Name:     "session",
 		Value:    "",
 		MaxAge:   -1,
 		Expires:  time.Now(),
 		Domain:   c.Request().Host,
-		Path:     "/auth",
+		Path:     sessionPath,
 		HttpOnly: true,
 		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
@@ -179,7 +198,7 @@ func (s *sessions) clearCookies(c echo.Context) {
 		MaxAge:   -1,
 		Expires:  time.Now(),
 		Domain:   c.Request().Host,
-		Path:     "/",
+		Path:     accessPath,
 		HttpOnly: false,
 		Secure:   s.Secure,
 		SameSite: http.SameSiteLaxMode,
