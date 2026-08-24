@@ -36,13 +36,14 @@ func (m *mockSessionStore) Delete(refreshToken string) error {
 
 func TestStart(t *testing.T) {
 	testCases := []struct {
-		when    string
+		when   string
 		current string
-		err     error
-		secure  bool
-		access  *http.Cookie
+		err    error
+		secure bool
+		prefix string
+		access *http.Cookie
 		refresh *http.Cookie
-		initSS  initSessionStoreMock
+		initSS initSessionStoreMock
 	}{
 		{
 			when:    "Session.Start вернул неизвестную ошибку",
@@ -57,8 +58,8 @@ func TestStart(t *testing.T) {
 			current: "session=123456",
 			err:     nil,
 			secure:  false,
-			access:  &http.Cookie{MaxAge: 300, Secure: false},
-			refresh: &http.Cookie{MaxAge: 600, Secure: false},
+			access:  &http.Cookie{MaxAge: 300, Secure: false, Path: "/"},
+			refresh: &http.Cookie{MaxAge: 600, Secure: false, Path: "/auth"},
 			initSS: func(m *mockSessionStore) {
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
@@ -69,8 +70,21 @@ func TestStart(t *testing.T) {
 			current: "session=123456",
 			err:     nil,
 			secure:  true,
-			access:  &http.Cookie{MaxAge: 300, Secure: true},
-			refresh: &http.Cookie{MaxAge: 600, Secure: true},
+			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/"},
+			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/auth"},
+			initSS: func(m *mockSessionStore) {
+				m.On("Delete", "123456").Return(nil)
+				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
+		{
+			when:    "Если все корректно с префиксом /api",
+			current: "session=123456",
+			err:     nil,
+			secure:  true,
+			prefix:  "/api",
+			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/api"},
+			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/api/auth"},
 			initSS: func(m *mockSessionStore) {
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
@@ -91,7 +105,7 @@ func TestStart(t *testing.T) {
 		mSessionStore := &mockSessionStore{}
 		tc.initSS(mSessionStore)
 
-		h := New([]byte("secret"), time.Minute*5, time.Minute*10, tc.secure, mSessionStore)
+		h := New(tc.prefix, []byte("secret"), time.Minute*5, time.Minute*10, tc.secure, mSessionStore)
 
 		c := e.NewContext(req, rec)
 
@@ -118,6 +132,7 @@ func TestStart(t *testing.T) {
 			if assert.NotNil(t, ac, "Отсутствует cookie с access-токеном") {
 				assert.Equal(t, tc.access.MaxAge, ac.MaxAge)
 				assert.Equal(t, tc.access.Secure, ac.Secure)
+				assert.Equal(t, tc.access.Path, ac.Path)
 			}
 		}
 
@@ -125,6 +140,7 @@ func TestStart(t *testing.T) {
 			if assert.NotNil(t, rc, "Отсутствует cookie с refresh-токеном") {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
 				assert.Equal(t, tc.refresh.Secure, rc.Secure)
+				assert.Equal(t, tc.refresh.Path, rc.Path)
 			}
 		}
 	}
@@ -167,6 +183,7 @@ func TestStop(t *testing.T) {
 		tc.initSS(mSessionStore)
 
 		h := sessions{
+			Prefix: "",
 			Secret: []byte("secret"),
 			Store:  mSessionStore,
 		}
@@ -292,7 +309,7 @@ func TestRefresh(t *testing.T) {
 		mSessionStore := &mockSessionStore{}
 		tc.initSS(mSessionStore)
 
-		h := New([]byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
+		h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
 
 		c := e.NewContext(req, rec)
 		c.SetPath("/auth/refresh/:uri")

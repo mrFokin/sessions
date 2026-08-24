@@ -178,6 +178,52 @@ err := sessionManager.Stop(c)
 e.GET("/auth/refresh/:uri", sessionManager.Refresh)
 ```
 
+### Конструкторы
+
+#### `New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions`
+
+Создает менеджер сессий.
+
+**Параметры:**
+- `prefix` - префикс пути для cookies (например, `/api` или `""` для корня)
+- `secret` - секретный ключ для подписи JWT токенов
+- `accessTimeout` - время жизни access токена
+- `refreshTimeout` - время жизни refresh токена
+- `secure` - флаг Secure для cookies (true для HTTPS)
+- `store` - реализация хранилища сессий
+
+**Поведение:**
+- Cookie `session` будет иметь Path: `{prefix}/auth`
+- Cookie `access` будет иметь Path: `{prefix}` (или `/` если prefix пустой)
+
+**Примеры:**
+
+Без префикса:
+```go
+sessionManager := sessions.New(
+    "",                 // без префикса
+    []byte("secret-key"),
+    15*time.Minute,
+    24*time.Hour,
+    true,
+    store,
+)
+// Cookies: session @ /auth, access @ /
+```
+
+С префиксом `/api`:
+```go
+sessionManager := sessions.New(
+    "/api",             // префикс пути
+    []byte("secret-key"),
+    15*time.Minute,
+    24*time.Hour,
+    true,
+    store,
+)
+// Cookies: session @ /api/auth, access @ /api
+```
+
 ### Интерфейс SessionStore
 
 Интерфейс для хранения сессий. Реализован в двух вариантах: memory и redis.
@@ -205,7 +251,7 @@ e.GET("/auth/refresh/:uri", sessionManager.Refresh)
 Middleware для защиты роутов с автоматическим редиректом на обновление токена.
 
 **Параметры:**
-- `path` - базовый путь для редиректа (обычно `/auth/refresh`)
+- `path` - полный путь для редиректа (включая префикс, если нужен)
 - `secret` - секретный ключ для верификации JWT
 - `claims` - структура claims для парсинга JWT
 
@@ -214,14 +260,29 @@ Middleware для защиты роутов с автоматическим ре
 - Если токен валиден - пропускает запрос дальше
 - Если токен отсутствует или невалиден - делает редирект на `{path}{текущий_URI}`
 
-**Пример:**
+**Примеры:**
+
+Без префикса:
 ```go
 api := e.Group("/api")
 api.Use(sessions.JWTWithRedirect(
-    "/auth/refresh",
+    "/auth/refresh",      // путь для refresh
     []byte("secret-key"),
     jwt.MapClaims{},
 ))
+// Редирект: /auth/refresh/api/profile
+```
+
+С префиксом `/api`:
+```go
+api := e.Group("/api")
+api.Use(sessions.JWTWithRedirect(
+    "/api/auth/refresh",  // полный путь с префиксом
+    []byte("secret-key"),
+    jwt.MapClaims{},
+))
+// Редирект: /api/auth/refresh/api/profile
+```
 ```
 
 ## Структуры данных
@@ -258,7 +319,7 @@ type Device struct {
 ### Cookie `session`
 
 - **Назначение:** хранит refresh токен
-- **Path:** `/auth`
+- **Path:** `{prefix}/auth` (по умолчанию `/auth`)
 - **HttpOnly:** `true` (недоступен для JavaScript)
 - **Secure:** настраивается при инициализации
 - **SameSite:** `Lax`
@@ -267,11 +328,15 @@ type Device struct {
 ### Cookie `access`
 
 - **Назначение:** хранит JWT access токен
-- **Path:** `/`
+- **Path:** `{prefix}` или `/` если prefix пустой
 - **HttpOnly:** `false` (доступен для JavaScript)
 - **Secure:** настраивается при инициализации
 - **SameSite:** `Lax`
 - **Время жизни:** accessTimeout
+
+**Примечание:** При использовании префикса `/api`:
+- Cookie `session` будет доступен только для путей `/api/auth/*`
+- Cookie `access` будет доступен для всех путей `/api/*`
 
 ## Хранилища
 

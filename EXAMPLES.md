@@ -5,6 +5,7 @@
 ## Содержание
 
 - [Базовое приложение](#базовое-приложение)
+- [Использование с префиксами путей](#использование-с-префиксами-путей)
 - [Работа с пользовательскими Claims](#работа-с-пользовательскими-claims)
 - [Интеграция с базой данных](#интеграция-с-базой-данных)
 - [Множественные роли пользователей](#множественные-роли-пользователей)
@@ -49,6 +50,7 @@ func main() {
     // Инициализация session manager
     sessionStore := store.NewMemoryStore()
     sessionManager = sessions.New(
+        "",             // без префикса
         secret,
         15*time.Minute, // access token
         7*24*time.Hour, // refresh token
@@ -137,6 +139,163 @@ func getDashboard(c echo.Context) error {
     })
 }
 ```
+
+## Использование с префиксами путей
+
+Пример приложения, работающего с префиксом пути `/api`:
+
+```go
+package main
+
+import (
+    "net/http"
+    "time"
+
+    "github.com/golang-jwt/jwt/v5"
+    "github.com/labstack/echo/v4"
+    "github.com/labstack/echo/v4/middleware"
+    "github.com/mrFokin/sessions"
+    "github.com/mrFokin/sessions/store"
+)
+
+var (
+    secret         = []byte("your-super-secret-key-min-32-bytes!!")
+    sessionManager sessions.Sessions
+)
+
+type LoginRequest struct {
+    Username string `json:"username"`
+    Password string `json:"password"`
+}
+
+func main() {
+    e := echo.New()
+
+    // Middleware
+    e.Use(middleware.Logger())
+    e.Use(middleware.Recover())
+
+    // Инициализация session manager с префиксом /api
+    sessionStore := store.NewMemoryStore()
+    sessionManager = sessions.New(
+        "/api",         // префикс пути
+        secret,
+        15*time.Minute, // access token
+        7*24*time.Hour, // refresh token
+        false,          // secure (для разработки)
+        sessionStore,
+    )
+
+    // Публичные роуты с префиксом
+    api := e.Group("/api")
+    api.POST("/auth/login", login)
+    api.POST("/auth/logout", logout)
+    api.GET("/auth/refresh/*", sessionManager.Refresh)
+
+    // Защищенные роуты с префиксом
+    protected := api.Group("")
+    protected.Use(sessions.JWTWithRedirect("/api/auth/refresh", secret, jwt.MapClaims{}))
+    protected.GET("/profile", getProfile)
+    protected.GET("/dashboard", getDashboard)
+    protected.GET("/users", getUsers)
+
+    e.Logger.Fatal(e.Start(":8080"))
+}
+
+func login(c echo.Context) error {
+    var req LoginRequest
+    if err := c.Bind(&req); err != nil {
+        return c.JSON(http.StatusBadRequest, map[string]string{
+            "error": "Invalid request",
+        })
+    }
+
+    // Проверка учетных данных
+    if req.Username != "admin" || req.Password != "password" {
+        return c.JSON(http.StatusUnauthorized, map[string]string{
+            "error": "Invalid credentials",
+        })
+    }
+
+    // Создание claims
+    claims := jwt.MapClaims{
+        "user_id":  "123",
+        "username": req.Username,
+        "email":    "admin@example.com",
+    }
+
+    // Начало сессии
+    if err := sessionManager.Start(c, claims); err != nil {
+        return c.JSON(http.StatusInternalServerError, map[string]string{
+            "error": "Failed to create session",
+        })
+    }
+
+    return c.JSON(http.StatusOK, map[string]string{
+        "message": "Login successful",
+    })
+}
+
+func logout(c echo.Context) error {
+    if err := sessionManager.Stop(c); err != nil {
+        return c.JSON(http.StatusInternalServerError, map[string]string{
+            "error": "Failed to logout",
+        })
+    }
+
+    return c.JSON(http.StatusOK, map[string]string{
+        "message": "Logout successful",
+    })
+}
+
+func getProfile(c echo.Context) error {
+    user := c.Get("user").(*jwt.Token)
+    claims := user.Claims.(jwt.MapClaims)
+
+    return c.JSON(http.StatusOK, map[string]interface{}{
+        "user_id":  claims["user_id"],
+        "username": claims["username"],
+        "email":    claims["email"],
+    })
+}
+
+func getDashboard(c echo.Context) error {
+    user := c.Get("user").(*jwt.Token)
+    claims := user.Claims.(jwt.MapClaims)
+
+    return c.JSON(http.StatusOK, map[string]interface{}{
+        "message": "Welcome to dashboard",
+        "user":    claims["username"],
+    })
+}
+
+func getUsers(c echo.Context) error {
+    return c.JSON(http.StatusOK, map[string]interface{}{
+        "users": []string{"user1", "user2", "user3"},
+    })
+}
+```
+
+**Важные моменты при работе с префиксами:**
+
+1. **Cookies с правильными путями:**
+   - Cookie `access` будет иметь Path: `/api`
+   - Cookie `session` будет иметь Path: `/api/auth`
+
+2. **URL редиректа:**
+   - При отсутствии токена редирект будет на `/api/auth/refresh{текущий_URI}`
+   - Например, для `/api/profile` редирект на `/api/auth/refresh/api/profile`
+
+3. **Маршруты:**
+   - Все маршруты должны начинаться с префикса `/api`
+   - Login: `POST /api/auth/login`
+   - Logout: `POST /api/auth/logout`
+   - Refresh: `GET /api/auth/refresh/*`
+   - Protected: `GET /api/profile`, `GET /api/dashboard`, etc.
+
+4. **Middleware:**
+   - В `JWTWithRedirect()` укажите полный путь с префиксом: `/api/auth/refresh`
+   - Пользователь сам контролирует префикс в параметре `path`
 
 ## Работа с пользовательскими Claims
 
