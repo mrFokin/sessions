@@ -20,19 +20,20 @@
 package main
 
 import (
+    "log/slog"
     "net/http"
     "time"
 
     "github.com/golang-jwt/jwt/v5"
-    "github.com/labstack/echo/v4"
-    "github.com/labstack/echo/v4/middleware"
-    "github.com/mrFokin/sessions"
-    "github.com/mrFokin/sessions/store"
+    "github.com/labstack/echo/v5"
+    "github.com/labstack/echo/v5/middleware"
+    "github.com/mrFokin/sessions/v2"
+    "github.com/mrFokin/sessions/v2/store"
 )
 
 var (
     secret         = []byte("your-super-secret-key-min-32-bytes!!")
-    sessionManager sessions.Sessions
+    sessionManager sessions.Sessions[jwt.MapClaims]
 )
 
 type LoginRequest struct {
@@ -44,11 +45,11 @@ func main() {
     e := echo.New()
 
     // Middleware
-    e.Use(middleware.Logger())
+    e.Use(middleware.RequestLogger())
     e.Use(middleware.Recover())
 
     // Инициализация session manager
-    sessionStore := store.NewMemoryStore()
+    sessionStore := store.NewMemoryStore[jwt.MapClaims]()
     sessionManager = sessions.New(
         "",             // без префикса
         secret,
@@ -65,14 +66,16 @@ func main() {
 
     // Защищенные роуты
     api := e.Group("/api")
-    api.Use(sessions.JWTWithRedirect("/auth/refresh", secret, jwt.MapClaims{}))
+    api.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", secret))
     api.GET("/profile", getProfile)
     api.GET("/dashboard", getDashboard)
 
-    e.Logger.Fatal(e.Start(":8080"))
+    if err := e.Start(":8080"); err != nil {
+        slog.Error("failed to start", "error", err)
+    }
 }
 
-func login(c echo.Context) error {
+func login(c *echo.Context) error {
     var req LoginRequest
     if err := c.Bind(&req); err != nil {
         return c.JSON(http.StatusBadRequest, map[string]string{
@@ -106,7 +109,7 @@ func login(c echo.Context) error {
     })
 }
 
-func logout(c echo.Context) error {
+func logout(c *echo.Context) error {
     if err := sessionManager.Stop(c); err != nil {
         return c.JSON(http.StatusInternalServerError, map[string]string{
             "error": "Failed to logout",
@@ -118,8 +121,8 @@ func logout(c echo.Context) error {
     })
 }
 
-func getProfile(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func getProfile(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(jwt.MapClaims)
 
     return c.JSON(http.StatusOK, map[string]interface{}{
@@ -129,8 +132,8 @@ func getProfile(c echo.Context) error {
     })
 }
 
-func getDashboard(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func getDashboard(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(jwt.MapClaims)
 
     return c.JSON(http.StatusOK, map[string]interface{}{
@@ -148,19 +151,20 @@ func getDashboard(c echo.Context) error {
 package main
 
 import (
+    "log/slog"
     "net/http"
     "time"
 
     "github.com/golang-jwt/jwt/v5"
-    "github.com/labstack/echo/v4"
-    "github.com/labstack/echo/v4/middleware"
-    "github.com/mrFokin/sessions"
-    "github.com/mrFokin/sessions/store"
+    "github.com/labstack/echo/v5"
+    "github.com/labstack/echo/v5/middleware"
+    "github.com/mrFokin/sessions/v2"
+    "github.com/mrFokin/sessions/v2/store"
 )
 
 var (
     secret         = []byte("your-super-secret-key-min-32-bytes!!")
-    sessionManager sessions.Sessions
+    sessionManager sessions.Sessions[jwt.MapClaims]
 )
 
 type LoginRequest struct {
@@ -172,11 +176,11 @@ func main() {
     e := echo.New()
 
     // Middleware
-    e.Use(middleware.Logger())
+    e.Use(middleware.RequestLogger())
     e.Use(middleware.Recover())
 
     // Инициализация session manager с префиксом /api
-    sessionStore := store.NewMemoryStore()
+    sessionStore := store.NewMemoryStore[jwt.MapClaims]()
     sessionManager = sessions.New(
         "/api",         // префикс пути
         secret,
@@ -194,15 +198,17 @@ func main() {
 
     // Защищенные роуты с префиксом
     protected := api.Group("")
-    protected.Use(sessions.JWTWithRedirect("/api/auth/refresh", secret, jwt.MapClaims{}))
+    protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/api/auth/refresh", secret))
     protected.GET("/profile", getProfile)
     protected.GET("/dashboard", getDashboard)
     protected.GET("/users", getUsers)
 
-    e.Logger.Fatal(e.Start(":8080"))
+    if err := e.Start(":8080"); err != nil {
+        slog.Error("failed to start", "error", err)
+    }
 }
 
-func login(c echo.Context) error {
+func login(c *echo.Context) error {
     var req LoginRequest
     if err := c.Bind(&req); err != nil {
         return c.JSON(http.StatusBadRequest, map[string]string{
@@ -236,7 +242,7 @@ func login(c echo.Context) error {
     })
 }
 
-func logout(c echo.Context) error {
+func logout(c *echo.Context) error {
     if err := sessionManager.Stop(c); err != nil {
         return c.JSON(http.StatusInternalServerError, map[string]string{
             "error": "Failed to logout",
@@ -248,8 +254,8 @@ func logout(c echo.Context) error {
     })
 }
 
-func getProfile(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func getProfile(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(jwt.MapClaims)
 
     return c.JSON(http.StatusOK, map[string]interface{}{
@@ -259,8 +265,8 @@ func getProfile(c echo.Context) error {
     })
 }
 
-func getDashboard(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func getDashboard(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(jwt.MapClaims)
 
     return c.JSON(http.StatusOK, map[string]interface{}{
@@ -269,7 +275,7 @@ func getDashboard(c echo.Context) error {
     })
 }
 
-func getUsers(c echo.Context) error {
+func getUsers(c *echo.Context) error {
     return c.JSON(http.StatusOK, map[string]interface{}{
         "users": []string{"user1", "user2", "user3"},
     })
@@ -309,9 +315,9 @@ import (
     "time"
 
     "github.com/golang-jwt/jwt/v5"
-    "github.com/labstack/echo/v4"
-    "github.com/mrFokin/sessions"
-    "github.com/mrFokin/sessions/store"
+    "github.com/labstack/echo/v5"
+    "github.com/mrFokin/sessions/v2"
+    "github.com/mrFokin/sessions/v2/store"
 )
 
 // Определяем структуру claims
@@ -323,13 +329,14 @@ type CustomClaims struct {
     jwt.RegisteredClaims
 }
 
-var sessionManager sessions.Sessions
+var sessionManager sessions.Sessions[*CustomClaims]
 
 func main() {
     e := echo.New()
 
-    sessionStore := store.NewMemoryStore()
+    sessionStore := store.NewMemoryStore[*CustomClaims]()
     sessionManager = sessions.New(
+        "",
         []byte("secret-key"),
         15*time.Minute,
         24*time.Hour,
@@ -341,21 +348,19 @@ func main() {
 
     // Middleware с пользовательскими claims
     api := e.Group("/api")
-    api.Use(sessions.JWTWithRedirect("/auth/refresh", []byte("secret-key"), &CustomClaims{}))
+    api.Use(sessions.JWTWithRedirect[*CustomClaims]("/auth/refresh", []byte("secret-key")))
     api.GET("/admin", adminOnly)
     api.GET("/user", userProfile)
 
     e.Start(":8080")
 }
 
-func loginWithCustomClaims(c echo.Context) error {
-    // Создаем claims с использованием нашей структуры
-    claims := jwt.MapClaims{
-        "user_id":  "user-123",
-        "username": "john_doe",
-        "email":    "john@example.com",
-        "roles":    []string{"user", "admin"},
-        "exp":      time.Now().Add(15 * time.Minute).Unix(),
+func loginWithCustomClaims(c *echo.Context) error {
+    claims := &CustomClaims{
+        UserID:   "user-123",
+        Username: "john_doe",
+        Email:    "john@example.com",
+        Roles:    []string{"user", "admin"},
     }
 
     if err := sessionManager.Start(c, claims); err != nil {
@@ -369,8 +374,8 @@ func loginWithCustomClaims(c echo.Context) error {
     })
 }
 
-func adminOnly(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func adminOnly(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(*CustomClaims)
 
     // Проверка роли
@@ -394,8 +399,8 @@ func adminOnly(c echo.Context) error {
     })
 }
 
-func userProfile(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func userProfile(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(*CustomClaims)
 
     return c.JSON(http.StatusOK, map[string]interface{}{
@@ -420,10 +425,10 @@ import (
     "time"
 
     "github.com/golang-jwt/jwt/v5"
-    "github.com/labstack/echo/v4"
+    "github.com/labstack/echo/v5"
     _ "github.com/lib/pq"
-    "github.com/mrFokin/sessions"
-    "github.com/mrFokin/sessions/store"
+    "github.com/mrFokin/sessions/v2"
+    "github.com/mrFokin/sessions/v2/store"
     "golang.org/x/crypto/bcrypt"
 )
 
@@ -481,8 +486,9 @@ func main() {
     e := echo.New()
 
     // Session manager с Redis для production
-    sessionStore := store.NewMemoryStore()
+    sessionStore := store.NewMemoryStore[jwt.MapClaims]()
     sessionManager := sessions.New(
+        "",
         []byte("secret-key"),
         15*time.Minute,
         7*24*time.Hour,
@@ -490,7 +496,7 @@ func main() {
         sessionStore,
     )
 
-    e.POST("/auth/login", func(c echo.Context) error {
+    e.POST("/auth/login", func(c *echo.Context) error {
         var req LoginRequest
         if err := c.Bind(&req); err != nil {
             return c.JSON(http.StatusBadRequest, map[string]string{
@@ -544,15 +550,15 @@ import (
     "net/http"
 
     "github.com/golang-jwt/jwt/v5"
-    "github.com/labstack/echo/v4"
-    "github.com/mrFokin/sessions"
+    "github.com/labstack/echo/v5"
+    "github.com/mrFokin/sessions/v2"
 )
 
 // Middleware для проверки наличия определенной роли
 func RequireRole(roles ...string) echo.MiddlewareFunc {
     return func(next echo.HandlerFunc) echo.HandlerFunc {
-        return func(c echo.Context) error {
-            user := c.Get("user").(*jwt.Token)
+        return func(c *echo.Context) error {
+            user, _ := echo.ContextGet[*jwt.Token](c, "user")
             claims := user.Claims.(jwt.MapClaims)
 
             userRoles, ok := claims["roles"].([]interface{})
@@ -581,7 +587,7 @@ func RequireRole(roles ...string) echo.MiddlewareFunc {
 func setupRoutes(e *echo.Echo, secret []byte) {
     // Защищенные роуты с проверкой ролей
     api := e.Group("/api")
-    api.Use(sessions.JWTWithRedirect("/auth/refresh", secret, jwt.MapClaims{}))
+    api.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", secret))
 
     // Доступно только админам
     admin := api.Group("/admin")
@@ -598,28 +604,28 @@ func setupRoutes(e *echo.Echo, secret []byte) {
     api.GET("/profile", getProfile)
 }
 
-func listUsers(c echo.Context) error {
+func listUsers(c *echo.Context) error {
     return c.JSON(http.StatusOK, map[string]string{
         "message": "List of users",
     })
 }
 
-func deleteUser(c echo.Context) error {
+func deleteUser(c *echo.Context) error {
     userID := c.Param("id")
     return c.JSON(http.StatusOK, map[string]string{
         "message": "User deleted: " + userID,
     })
 }
 
-func approvePost(c echo.Context) error {
+func approvePost(c *echo.Context) error {
     postID := c.Param("id")
     return c.JSON(http.StatusOK, map[string]string{
         "message": "Post approved: " + postID,
     })
 }
 
-func getProfile(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func getProfile(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(jwt.MapClaims)
     return c.JSON(http.StatusOK, claims)
 }
@@ -636,30 +642,29 @@ import (
     "errors"
     "net/http"
 
-    "github.com/labstack/echo/v4"
-    "github.com/mrFokin/sessions"
+    "github.com/labstack/echo/v5"
+    "github.com/mrFokin/sessions/v2"
 )
 
-func customErrorHandler(err error, c echo.Context) {
-    code := http.StatusInternalServerError
+func customErrorHandler(c *echo.Context, err error) {
+    code := echo.StatusCode(err)
+    if code == 0 {
+        code = http.StatusInternalServerError
+    }
     message := "Internal server error"
 
-    // Проверка на конкретные ошибки
     if errors.Is(err, sessions.ErrSessionNotFound) {
         code = http.StatusUnauthorized
         message = "Session not found or expired"
-    } else if he, ok := err.(*echo.HTTPError); ok {
-        code = he.Code
-        if msg, ok := he.Message.(string); ok {
-            message = msg
-        }
+    } else if he, ok := err.(*echo.HTTPError); ok && he.Message != "" {
+        message = he.Message
     }
 
-    // Логирование ошибки
-    c.Logger().Error(err)
+    c.Logger().Error("request failed", "error", err)
 
     // Отправка JSON ответа
-    if !c.Response().Committed {
+    resp, _ := echo.UnwrapResponse(c.Response())
+    if resp == nil || !resp.Committed {
         if c.Request().Method == http.MethodHead {
             c.NoContent(code)
         } else {

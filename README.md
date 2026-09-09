@@ -1,6 +1,6 @@
 # Sessions
 
-Библиотека для управления сессиями пользователей в веб-приложениях на Go с использованием Echo framework. Поддерживает JWT токены, refresh tokens и различные хранилища сессий.
+Библиотека для управления сессиями пользователей в веб-приложениях на Go с **Echo v5**. Claims типизированы дженериками (`Sessions[C jwt.Claims]`). Для Echo v4 используйте [`v1.0.0`](https://github.com/mrFokin/sessions/tree/v1).
 
 ## Возможности
 
@@ -15,12 +15,12 @@
 ## Установка
 
 ```bash
-go get github.com/mrFokin/sessions
+go get github.com/mrFokin/sessions/v2
 ```
 
 ## Зависимости
 
-- `github.com/labstack/echo/v4` - веб-фреймворк
+- `github.com/labstack/echo/v5` - веб-фреймворк
 - `github.com/golang-jwt/jwt/v5` - работа с JWT
 - `github.com/google/uuid` - генерация уникальных идентификаторов
 - `github.com/redis/go-redis/v9` - клиент Redis (опционально)
@@ -34,17 +34,17 @@ package main
 
 import (
     "time"
-    "github.com/labstack/echo/v4"
+    "github.com/labstack/echo/v5"
     "github.com/golang-jwt/jwt/v5"
-    "github.com/mrFokin/sessions"
-    "github.com/mrFokin/sessions/store"
+    "github.com/mrFokin/sessions/v2"
+    "github.com/mrFokin/sessions/v2/store"
 )
 
 func main() {
     e := echo.New()
     
     // Создаем хранилище сессий
-    sessionStore := store.NewMemoryStore()
+    sessionStore := store.NewMemoryStore[jwt.MapClaims]()
     
     // Инициализируем менеджер сессий
     sessionManager := sessions.New(
@@ -57,7 +57,7 @@ func main() {
     )
     
     // Роут для начала сессии
-    e.POST("/auth/login", func(c echo.Context) error {
+    e.POST("/auth/login", func(c *echo.Context) error {
         // Ваша логика проверки логина/пароля
         claims := jwt.MapClaims{
             "user_id": "123",
@@ -75,15 +75,15 @@ func main() {
     e.POST("/auth/refresh/*uri", sessionManager.Refresh)
     
     // Роут для выхода
-    e.POST("/auth/logout", func(c echo.Context) error {
+    e.POST("/auth/logout", func(c *echo.Context) error {
         return sessionManager.Stop(c)
     })
     
     // Защищенный роут
     protected := e.Group("/api")
-    protected.Use(sessions.JWTWithRedirect("/auth/refresh", []byte("your-secret-key"), jwt.MapClaims{}))
-    protected.GET("/profile", func(c echo.Context) error {
-        user := c.Get("user").(*jwt.Token)
+    protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", []byte("your-secret-key")))
+    protected.GET("/profile", func(c *echo.Context) error {
+        user, _ := echo.ContextGet[*jwt.Token](c, "user")
         claims := user.Claims.(jwt.MapClaims)
         return c.JSON(200, claims)
     })
@@ -97,11 +97,11 @@ func main() {
 ```go
 import (
     "github.com/redis/go-redis/v9"
-    "github.com/mrFokin/sessions/store"
+    "github.com/mrFokin/sessions/v2/store"
 )
 
 // Создаем Redis хранилище
-redisStore := store.NewRedisStore(&redis.Options{
+redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
     Addr:     "localhost:6379",
     Password: "",
     DB:       0,
@@ -134,13 +134,13 @@ sessionManager := sessions.New(
 
 Основной интерфейс для управления сессиями.
 
-#### `Start(c echo.Context, claims jwt.MapClaims) error`
+#### `Start(c *echo.Context, claims C) error`
 
 Создает новую сессию для пользователя.
 
 **Параметры:**
 - `c` - контекст Echo
-- `claims` - JWT claims, которые будут включены в access токен
+- `claims` - JWT claims типа `C`, которые будут включены в access токен
 
 **Поведение:**
 - Если существует активная сессия, она будет удалена
@@ -159,7 +159,7 @@ claims := jwt.MapClaims{
 err := sessionManager.Start(c, claims)
 ```
 
-#### `Stop(c echo.Context) error`
+#### `Stop(c *echo.Context) error`
 
 Завершает текущую сессию пользователя.
 
@@ -172,7 +172,7 @@ err := sessionManager.Start(c, claims)
 err := sessionManager.Stop(c)
 ```
 
-#### `Refresh(c echo.Context) error`
+#### `Refresh(c *echo.Context) error`
 
 Обновляет истекший access токен используя refresh токен.
 
@@ -194,7 +194,7 @@ e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 
 ### Конструкторы
 
-#### `New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions`
+#### `New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore[C]) Sessions[C]`
 
 Создает менеджер сессий.
 
@@ -242,11 +242,11 @@ sessionManager := sessions.New(
 
 Интерфейс для хранения сессий. Реализован в двух вариантах: memory и redis.
 
-#### `Create(Session) error`
+#### `Create(Session[C]) error`
 
 Сохраняет сессию в хранилище.
 
-#### `Read(refreshToken string) (Session, error)`
+#### `Read(refreshToken string) (Session[C], error)`
 
 Загружает сессию по refresh токену.
 
@@ -260,14 +260,14 @@ sessionManager := sessions.New(
 
 ### Middleware
 
-#### `JWTWithRedirect(path string, secret []byte, claims jwt.Claims) echo.MiddlewareFunc`
+#### `JWTWithRedirect[C jwt.Claims](path string, secret []byte) echo.MiddlewareFunc`
 
 Middleware для защиты роутов с автоматическим редиректом на обновление токена.
 
 **Параметры:**
 - `path` - полный путь для редиректа (включая префикс, если нужен)
 - `secret` - секретный ключ для верификации JWT
-- `claims` - образец типа claims; на каждый запрос создаётся новый экземпляр
+- тип `C` — claims; на каждый запрос создаётся новый экземпляр
 
 **Поведение:**
 - Проверяет access токен из cookie
@@ -279,10 +279,9 @@ Middleware для защиты роутов с автоматическим ре
 Без префикса:
 ```go
 api := e.Group("/api")
-api.Use(sessions.JWTWithRedirect(
+api.Use(sessions.JWTWithRedirect[jwt.MapClaims](
     "/auth/refresh",      // путь для refresh
     []byte("secret-key"),
-    jwt.MapClaims{},
 ))
 // Редирект: /auth/refresh/api/profile
 ```
@@ -290,13 +289,11 @@ api.Use(sessions.JWTWithRedirect(
 С префиксом `/api`:
 ```go
 api := e.Group("/api")
-api.Use(sessions.JWTWithRedirect(
+api.Use(sessions.JWTWithRedirect[jwt.MapClaims](
     "/api/auth/refresh",  // полный путь с префиксом
     []byte("secret-key"),
-    jwt.MapClaims{},
 ))
 // Редирект: /api/auth/refresh/api/profile
-```
 ```
 
 ## Структуры данных
@@ -306,12 +303,12 @@ api.Use(sessions.JWTWithRedirect(
 Представляет сессию пользователя.
 
 ```go
-type Session struct {
-    Token   string           // Уникальный refresh токен (UUID)
-    Claims  jwt.MapClaims    // JWT claims пользователя
-    Device  Device           // Информация об устройстве
-    Created time.Time        // Время создания сессии
-    Expired time.Time        // Время истечения сессии
+type Session[C jwt.Claims] struct {
+    Token   string        // Уникальный refresh токен (UUID)
+    Claims  C             // JWT claims пользователя
+    Device  Device        // Информация об устройстве
+    Created time.Time     // Время создания сессии
+    Expired time.Time     // Время истечения сессии
 }
 ```
 
@@ -372,7 +369,7 @@ In-memory хранилище на основе `sync.Map`. Подходит дл
 
 **Использование:**
 ```go
-store := store.NewMemoryStore()
+store := store.NewMemoryStore[jwt.MapClaims]()
 ```
 
 ### Redis Store
@@ -391,7 +388,7 @@ store := store.NewMemoryStore()
 
 **Использование:**
 ```go
-redisStore := store.NewRedisStore(&redis.Options{
+redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
     Addr:     "localhost:6379",
     Password: "your-password",
     DB:       0,
@@ -449,15 +446,14 @@ type CustomClaims struct {
 }
 
 // В middleware
-api.Use(sessions.JWTWithRedirect(
+api.Use(sessions.JWTWithRedirect[*CustomClaims](
     "/auth/refresh",
     []byte("secret"),
-    &CustomClaims{},
 ))
 
 // В обработчике
-func handler(c echo.Context) error {
-    user := c.Get("user").(*jwt.Token)
+func handler(c *echo.Context) error {
+    user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(*CustomClaims)
     
     userID := claims.UserID
@@ -471,16 +467,16 @@ func handler(c echo.Context) error {
 
 ```go
 type LoggingStore struct {
-    store sessions.SessionStore
+    store sessions.SessionStore[jwt.MapClaims]
     logger *log.Logger
 }
 
-func (l *LoggingStore) Create(s sessions.Session) error {
+func (l *LoggingStore) Create(s sessions.Session[jwt.MapClaims]) error {
     l.logger.Printf("Creating session: %s for device: %s", s.Token, s.Device.IP)
     return l.store.Create(s)
 }
 
-func (l *LoggingStore) Read(token string) (sessions.Session, error) {
+func (l *LoggingStore) Read(token string) (sessions.Session[jwt.MapClaims], error) {
     session, err := l.store.Read(token)
     if err != nil {
         l.logger.Printf("Failed to read session: %s, error: %v", token, err)
@@ -574,7 +570,7 @@ redis-cli -h localhost -p 6379
    Клиент go-redis автоматически управляет пулом соединений. Настройте размер пула для высоконагруженных приложений:
    
    ```go
-   redisStore := store.NewRedisStore(&redis.Options{
+   redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
        Addr:         "localhost:6379",
        PoolSize:     100,
        MinIdleConns: 10,
