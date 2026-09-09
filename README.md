@@ -119,7 +119,7 @@ sessionManager := sessions.New(
 
 Библиотека рассчитана на JSON-RPC по HTTP с cookies, а не на REST с query/fragment.
 
-- Метод RPC в теле запроса. URL — endpoint. После refresh в `Location` попадает только path из `*uri`; query, fragment и trailing slash не восстанавливаются и не поддерживаются.
+- Метод RPC в теле запроса. URL — endpoint. После refresh в `Location` попадает только same-origin path из `*uri` (`url.Parse`, без host и `//`). Иначе 400, сессия не ротируется. Query, fragment и trailing slash не восстанавливаются.
 - `JWTWithRedirect` отвечает **307**. Клиент должен следовать редиректу, сохранить метод и тело, слать cookies (`credentials`). Транспорт без cookie jar или без follow redirect автоматический refresh не получит.
 - Хендлер refresh вешается как **POST** `/…/auth/refresh/*uri`. 307 с JSON-RPC POST иначе получит 405 на GET-роуте.
 - Cookie `session` имеет Path `{prefix}/auth`, поэтому URL refresh должен быть под этим путём — иначе refresh-токен не уйдёт.
@@ -179,9 +179,10 @@ err := sessionManager.Stop(c)
 **Поведение:**
 - Проверяет наличие refresh токена в cookie `session`
 - Загружает сессию из хранилища
+- Нормализует `*uri` в same-origin path; иначе 400 без ротации сессии
 - Проверяет срок действия refresh токена
 - Создает новую сессию с теми же claims
-- Делает редирект 307 на `/{uri}`
+- Делает редирект 307 на нормализованный path
 
 **Маршрут:**
 ```go

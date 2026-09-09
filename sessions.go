@@ -3,6 +3,9 @@ package sessions
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -93,6 +96,11 @@ func (s *sessions) Refresh(c echo.Context) error {
 		return err
 	}
 
+	uri, err := redirectPath(c.Param("uri"))
+	if err != nil {
+		return err
+	}
+
 	if err := s.Store.Delete(current.Token); err != nil {
 		c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
 	}
@@ -109,8 +117,28 @@ func (s *sessions) Refresh(c echo.Context) error {
 		return err
 	}
 
-	uri := "/" + c.Param("uri")
 	return c.Redirect(http.StatusTemporaryRedirect, uri)
+}
+
+func redirectPath(param string) (string, error) {
+	if strings.ContainsAny(param, "\\") {
+		return "", echo.ErrBadRequest
+	}
+
+	u, err := url.Parse("/" + param)
+	if err != nil {
+		return "", echo.ErrBadRequest
+	}
+	if u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil {
+		return "", echo.ErrBadRequest
+	}
+
+	p := path.Clean(u.Path)
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return "", echo.ErrBadRequest
+	}
+
+	return p, nil
 }
 
 func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {

@@ -219,14 +219,39 @@ func TestStop(t *testing.T) {
 	}
 }
 
+func TestRedirectPath(t *testing.T) {
+	testCases := []struct {
+		param string
+		want  string
+		err   error
+	}{
+		{param: "rpc", want: "/rpc"},
+		{param: "api/v2", want: "/api/v2"},
+		{param: "", want: "/"},
+		{param: "../x", want: "/x"},
+		{param: "/rpc", err: echo.ErrBadRequest},
+		{param: "/evil.com", err: echo.ErrBadRequest},
+		{param: `\evil.com`, err: echo.ErrBadRequest},
+		{param: "//evil.com", want: "/evil.com"},
+		{param: "%2F%2Fevil.com", want: "/evil.com"},
+	}
+
+	for _, tc := range testCases {
+		got, err := redirectPath(tc.param)
+		assert.Equal(t, tc.err, err, "param=%q", tc.param)
+		assert.Equal(t, tc.want, got, "param=%q", tc.param)
+	}
+}
+
 func TestRefresh(t *testing.T) {
 	testCases := []struct {
 		when     string
 		current  string
+		uri      string
 		err      error
 		access   *http.Cookie
 		refresh  *http.Cookie
-		redirect bool
+		redirect string
 		initSS   initSessionStoreMock
 	}{
 		{
@@ -279,10 +304,11 @@ func TestRefresh(t *testing.T) {
 		{
 			when:     "Если все корректно",
 			current:  "session=123456",
+			uri:      "api/v2",
 			err:      nil,
 			access:   &http.Cookie{MaxAge: 300, Secure: true},
 			refresh:  &http.Cookie{MaxAge: 600, Secure: true},
-			redirect: true,
+			redirect: "/api/v2",
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",
@@ -292,6 +318,20 @@ func TestRefresh(t *testing.T) {
 				m.On("Read", "123456").Return(s, nil)
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
+		{
+			when:    "Open redirect через //host",
+			current: "session=123456",
+			uri:     "/evil.com",
+			err:     echo.ErrBadRequest,
+			initSS: func(m *mockSessionStore) {
+				s := Session{
+					Token:   "123456",
+					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
+					Expired: time.Now().Add(time.Hour),
+				}
+				m.On("Read", "123456").Return(s, nil)
 			},
 		},
 	}
@@ -314,7 +354,7 @@ func TestRefresh(t *testing.T) {
 		c := e.NewContext(req, rec)
 		c.SetPath("/auth/refresh/*uri")
 		c.SetParamNames("uri")
-		c.SetParamValues("api/v2")
+		c.SetParamValues(tc.uri)
 
 		err := h.Refresh(c)
 
@@ -347,9 +387,9 @@ func TestRefresh(t *testing.T) {
 			}
 		}
 
-		if tc.redirect {
+		if tc.redirect != "" {
 			assert.Equal(t, http.StatusTemporaryRedirect, rec.Code, "Некорректный http-статус ответа")
-			assert.Equal(t, "/api/v2", rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
+			assert.Equal(t, tc.redirect, rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
 		}
 	}
 }
