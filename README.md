@@ -1,33 +1,37 @@
 # Sessions
 
-Библиотека для управления сессиями пользователей в веб-приложениях на Go с **Echo v5**. Claims типизированы дженериками (`Sessions[C jwt.Claims]`). Для Echo v4 используйте [`v1.0.0`](https://github.com/mrFokin/sessions/tree/v1).
+[![Go Reference](https://pkg.go.dev/badge/github.com/mrFokin/sessions/v2.svg)](https://pkg.go.dev/github.com/mrFokin/sessions/v2)
 
-## Возможности
+Cookie-based session management for Go web apps on **Echo v5**. Claims are typed with generics (`Sessions[C jwt.Claims]`). For Echo v4 use [`v1.0.0`](https://github.com/mrFokin/sessions/tree/v1).
 
-- 🔐 **JWT аутентификация** - использование access токенов на основе JWT
-- 🔄 **Refresh токены** - автоматическое обновление сессий
-- 🍪 **Cookie-based хранение** - безопасное хранение токенов в cookies
-- 💾 **Множественные хранилища** - поддержка in-memory и Redis хранилищ
-- 🛡️ **Безопасность** - HttpOnly cookies, Secure флаги, SameSite защита
-- 📱 **Отслеживание устройств** - сохранение информации об IP и User-Agent
-- ↩️ **Автоматический редирект** - middleware с автоматическим перенаправлением на страницу авторизации
+API reference: [pkg.go.dev/github.com/mrFokin/sessions/v2](https://pkg.go.dev/github.com/mrFokin/sessions/v2)
 
-## Установка
+## Features
+
+- JWT authentication — access tokens based on JWT
+- Refresh tokens — automatic session rotation
+- Cookie storage — tokens kept in cookies
+- Multiple stores — in-memory and Redis
+- Security — HttpOnly cookies, Secure flags, SameSite
+- Device tracking — IP and User-Agent are stored
+- Automatic redirect — middleware that sends the client to refresh
+
+## Install
 
 ```bash
 go get github.com/mrFokin/sessions/v2
 ```
 
-## Зависимости
+## Dependencies
 
-- `github.com/labstack/echo/v5` - веб-фреймворк
-- `github.com/golang-jwt/jwt/v5` - работа с JWT
-- `github.com/google/uuid` - генерация уникальных идентификаторов
-- `github.com/redis/go-redis/v9` - клиент Redis (опционально)
+- `github.com/labstack/echo/v5` — web framework
+- `github.com/golang-jwt/jwt/v5` — JWT
+- `github.com/google/uuid` — unique identifiers
+- `github.com/redis/go-redis/v9` — Redis client (optional)
 
-## Быстрый старт
+## Quick start
 
-### Базовая настройка с in-memory хранилищем
+### In-memory store
 
 ```go
 package main
@@ -43,22 +47,19 @@ import (
 func main() {
     e := echo.New()
     
-    // Создаем хранилище сессий
     sessionStore := store.NewMemoryStore[jwt.MapClaims]()
     
-    // Инициализируем менеджер сессий
     sessionManager := sessions.New(
         "",                          // prefix
-        []byte("your-secret-key"),  // секретный ключ для JWT
-        15*time.Minute,              // время жизни access токена
-        24*time.Hour,                // время жизни refresh токена
-        false,                       // secure (true для HTTPS)
+        []byte("your-secret-key"),  // JWT signing secret
+        15*time.Minute,              // access token TTL
+        24*time.Hour,                // refresh token TTL
+        false,                       // secure (true for HTTPS)
         sessionStore,
     )
     
-    // Роут для начала сессии
     e.POST("/auth/login", func(c *echo.Context) error {
-        // Ваша логика проверки логина/пароля
+        // your login/password check
         claims := jwt.MapClaims{
             "user_id": "123",
             "email": "user@example.com",
@@ -71,15 +72,12 @@ func main() {
         return c.JSON(200, map[string]string{"status": "ok"})
     })
     
-    // Роут для обновления сессии
     e.POST("/auth/refresh/*uri", sessionManager.Refresh)
     
-    // Роут для выхода
     e.POST("/auth/logout", func(c *echo.Context) error {
         return sessionManager.Stop(c)
     })
     
-    // Защищенный роут
     protected := e.Group("/api")
     protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", []byte("your-secret-key")))
     protected.GET("/profile", func(c *echo.Context) error {
@@ -92,7 +90,7 @@ func main() {
 }
 ```
 
-### Использование Redis хранилища
+### Redis store
 
 ```go
 import (
@@ -100,7 +98,6 @@ import (
     "github.com/mrFokin/sessions/v2/store"
 )
 
-// Создаем Redis хранилище
 redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
     Addr:     "localhost:6379",
     Password: "",
@@ -118,38 +115,38 @@ sessionManager := sessions.New(
 )
 ```
 
-## Ограничения
+## Limitations
 
-Библиотека рассчитана на JSON-RPC по HTTP с cookies, а не на REST с query/fragment.
+The library is built for JSON-RPC over HTTP with cookies, not REST with query/fragment.
 
-- Метод RPC в теле запроса. URL — endpoint. После refresh в `Location` попадает только same-origin path из `*uri` (`url.Parse`, без host и `//`). Иначе 400, сессия не ротируется. Query, fragment и trailing slash не восстанавливаются.
-- `JWTWithRedirect` отвечает **307**. Клиент должен следовать редиректу, сохранить метод и тело, слать cookies (`credentials`). Транспорт без cookie jar или без follow redirect автоматический refresh не получит.
-- Хендлер refresh вешается как **POST** `/…/auth/refresh/*uri`. 307 с JSON-RPC POST иначе получит 405 на GET-роуте.
-- Cookie `session` имеет Path `{prefix}/auth`, поэтому URL refresh должен быть под этим путём — иначе refresh-токен не уйдёт.
-- TTL cookie `access` совпадает с `exp` JWT: браузер не шлёт протухший access. Триггер refresh — отсутствие cookie (`ErrJWTMissing`), не разбор истёкшего JWT.
+- The RPC method is in the request body. The URL is the endpoint. After refresh, `Location` is only the same-origin path from `*uri` (`url.Parse`, no host and no `//`). Otherwise 400, and the session is not rotated. Query, fragment, and trailing slash are not restored.
+- `JWTWithRedirect` responds **307**. The client must follow the redirect, keep method and body, and send cookies (`credentials`). A transport without a cookie jar or without follow-redirect will not get automatic refresh.
+- Mount refresh as **POST** `/…/auth/refresh/*uri`. A 307 from a JSON-RPC POST would otherwise get 405 on a GET route.
+- Cookie `session` has Path `{prefix}/auth`, so the refresh URL must be under that path — otherwise the refresh token is not sent.
+- Cookie `access` TTL matches JWT `exp`: the browser does not send an expired access cookie. Refresh is triggered by a missing cookie (`ErrJWTMissing`), not by parsing an expired JWT.
 
-## API документация
+## API
 
-### Интерфейс Sessions
+### Sessions interface
 
-Основной интерфейс для управления сессиями.
+The main interface for session management.
 
 #### `Start(c *echo.Context, claims C) error`
 
-Создает новую сессию для пользователя.
+Creates a new session for the user.
 
-**Параметры:**
-- `c` - контекст Echo
-- `claims` - JWT claims типа `C`, которые будут включены в access токен
+**Parameters:**
+- `c` — Echo context
+- `claims` — JWT claims of type `C` included in the access token
 
-**Поведение:**
-- Если существует активная сессия, она будет удалена
-- Создает новый access токен с указанными claims
-- Генерирует уникальный refresh токен
-- Сохраняет сессию в хранилище
-- Устанавливает два cookies: `access` и `session`
+**Behavior:**
+- Deletes an existing session if one is present
+- Creates a new access token with the given claims
+- Generates a unique refresh token
+- Stores the session
+- Sets two cookies: `access` and `session`
 
-**Пример:**
+**Example:**
 ```go
 claims := jwt.MapClaims{
     "user_id": userID,
@@ -161,61 +158,61 @@ err := sessionManager.Start(c, claims)
 
 #### `Stop(c *echo.Context) error`
 
-Завершает текущую сессию пользователя.
+Ends the current user session.
 
-**Поведение:**
-- Удаляет сессию из хранилища
-- Очищает cookies `access` и `session`
+**Behavior:**
+- Deletes the session from the store
+- Clears cookies `access` and `session`
 
-**Пример:**
+**Example:**
 ```go
 err := sessionManager.Stop(c)
 ```
 
 #### `Refresh(c *echo.Context) error`
 
-Обновляет истекший access токен используя refresh токен.
+Rotates the expired access token using the refresh token.
 
-**Параметры:**
-- Ожидает параметр пути `*uri` — path для редиректа после обновления (хвост исходного URL)
+**Parameters:**
+- Expects path parameter `*uri` — the path to redirect to after refresh (tail of the original URL)
 
-**Поведение:**
-- Проверяет наличие refresh токена в cookie `session`
-- Загружает сессию из хранилища; `ErrSessionNotFound` → 401
-- Нормализует `*uri` в same-origin path; иначе 400 без ротации сессии
-- Проверяет срок действия refresh токена
-- Создает новую сессию с копией claims, затем удаляет старую
-- Делает редирект 307 на нормализованный path
+**Behavior:**
+- Requires a refresh token in cookie `session`
+- Loads the session from the store; `ErrSessionNotFound` → 401
+- Normalizes `*uri` to a same-origin path; otherwise 400 without rotating the session
+- Checks refresh token expiry
+- Creates a new session with a copy of claims, then deletes the old one
+- Redirects 307 to the normalized path
 
-**Маршрут:**
+**Route:**
 ```go
 e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 ```
 
-### Конструкторы
+### Constructors
 
 #### `New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore[C]) Sessions[C]`
 
-Создает менеджер сессий.
+Creates a session manager.
 
-**Параметры:**
-- `prefix` - префикс пути для cookies (например, `/api` или `""` для корня). Непустой prefix без `/` нормализуется (`api` → `/api`), хвостовой `/` срезается.
-- `secret` - секретный ключ для подписи JWT токенов
-- `accessTimeout` - время жизни access токена
-- `refreshTimeout` - время жизни refresh токена
-- `secure` - флаг Secure для cookies (true для HTTPS)
-- `store` - реализация хранилища сессий
+**Parameters:**
+- `prefix` — cookie path prefix (for example `/api` or `""` for the root). A non-empty prefix without `/` is normalized (`api` → `/api`); a trailing `/` is stripped.
+- `secret` — JWT signing key
+- `accessTimeout` — access token lifetime
+- `refreshTimeout` — refresh token lifetime
+- `secure` — Secure flag for cookies (true for HTTPS)
+- `store` — session store implementation
 
-**Поведение:**
-- Cookie `session` будет иметь Path: `{prefix}/auth`
-- Cookie `access` будет иметь Path: `{prefix}` (или `/` если prefix пустой)
+**Behavior:**
+- Cookie `session` Path: `{prefix}/auth`
+- Cookie `access` Path: `{prefix}` (or `/` if prefix is empty)
 
-**Примеры:**
+**Examples:**
 
-Без префикса:
+No prefix:
 ```go
 sessionManager := sessions.New(
-    "",                 // без префикса
+    "",                 // no prefix
     []byte("secret-key"),
     15*time.Minute,
     24*time.Hour,
@@ -225,10 +222,10 @@ sessionManager := sessions.New(
 // Cookies: session @ /auth, access @ /
 ```
 
-С префиксом `/api`:
+Prefix `/api`:
 ```go
 sessionManager := sessions.New(
-    "/api",             // префикс пути
+    "/api",             // path prefix
     []byte("secret-key"),
     15*time.Minute,
     24*time.Hour,
@@ -238,155 +235,155 @@ sessionManager := sessions.New(
 // Cookies: session @ /api/auth, access @ /api
 ```
 
-### Интерфейс SessionStore
+### SessionStore interface
 
-Интерфейс для хранения сессий. Реализован в двух вариантах: memory и redis.
+Interface for storing sessions. Implemented as memory and redis.
 
 #### `Create(Session[C]) error`
 
-Сохраняет сессию в хранилище.
+Stores a session.
 
 #### `Read(refreshToken string) (Session[C], error)`
 
-Загружает сессию по refresh токену.
+Loads a session by refresh token.
 
-**Возвращает:**
-- `Session` - данные сессии
-- `error` - `ErrSessionNotFound` если сессия не найдена
+**Returns:**
+- `Session` — session data
+- `error` — `ErrSessionNotFound` if the session does not exist
 
 #### `Delete(refreshToken string) error`
 
-Удаляет сессию из хранилища.
+Deletes a session from the store.
 
 ### Middleware
 
 #### `JWTWithRedirect[C jwt.Claims](path string, secret []byte) echo.MiddlewareFunc`
 
-Middleware для защиты роутов с автоматическим редиректом на обновление токена.
+Middleware that protects routes and redirects to token refresh.
 
-**Параметры:**
-- `path` - полный путь для редиректа (включая префикс, если нужен)
-- `secret` - секретный ключ для верификации JWT
-- тип `C` — claims; на каждый запрос создаётся новый экземпляр
+**Parameters:**
+- `path` — full redirect path (include the prefix if needed)
+- `secret` — JWT verification key
+- type `C` — claims; a new instance is created per request
 
-**Поведение:**
-- Проверяет access токен из cookie
-- Если токен валиден - пропускает запрос дальше
-- Если токен отсутствует или невалиден - делает редирект на `{path}{текущий_URI}`
+**Behavior:**
+- Checks the access token from the cookie
+- If the token is valid — continues
+- If the token is missing or invalid — redirects to `{path}{current URI}`
 
-**Примеры:**
+**Examples:**
 
-Без префикса:
+No prefix:
 ```go
 api := e.Group("/api")
 api.Use(sessions.JWTWithRedirect[jwt.MapClaims](
-    "/auth/refresh",      // путь для refresh
+    "/auth/refresh",      // refresh path
     []byte("secret-key"),
 ))
-// Редирект: /auth/refresh/api/profile
+// Redirect: /auth/refresh/api/profile
 ```
 
-С префиксом `/api`:
+Prefix `/api`:
 ```go
 api := e.Group("/api")
 api.Use(sessions.JWTWithRedirect[jwt.MapClaims](
-    "/api/auth/refresh",  // полный путь с префиксом
+    "/api/auth/refresh",  // full path with prefix
     []byte("secret-key"),
 ))
-// Редирект: /api/auth/refresh/api/profile
+// Redirect: /api/auth/refresh/api/profile
 ```
 
-## Структуры данных
+## Data types
 
 ### Session
 
-Представляет сессию пользователя.
+A user session.
 
 ```go
 type Session[C jwt.Claims] struct {
-    Token   string        // Уникальный refresh токен (UUID)
-    Claims  C             // JWT claims пользователя
-    Device  Device        // Информация об устройстве
-    Created time.Time     // Время создания сессии
-    Expired time.Time     // Время истечения сессии
+    Token   string        // unique refresh token (UUID)
+    Claims  C             // user JWT claims
+    Device  Device        // device info
+    Created time.Time     // session creation time
+    Expired time.Time     // session expiry
 }
 ```
 
 ### Device
 
-Информация об устройстве пользователя.
+Client device info.
 
 ```go
 type Device struct {
-    IP        string  // IP клиента (Echo RealIP)
-    UserAgent string  // User-Agent браузера
+    IP        string  // client IP (Echo RealIP)
+    UserAgent string  // browser User-Agent
 }
 ```
 
 ## Cookies
 
-Библиотека использует два типа cookies:
+The library uses two cookies:
 
 ### Cookie `session`
 
-- **Назначение:** хранит refresh токен
-- **Path:** `{prefix}/auth` (по умолчанию `/auth`)
-- **Domain:** не задаётся (host-only)
-- **HttpOnly:** `true` (недоступен для JavaScript)
-- **Secure:** настраивается при инициализации
+- **Purpose:** refresh token
+- **Path:** `{prefix}/auth` (default `/auth`)
+- **Domain:** unset (host-only)
+- **HttpOnly:** `true` (not available to JavaScript)
+- **Secure:** configured at init
 - **SameSite:** `Lax`
-- **Время жизни:** refreshTimeout
+- **Lifetime:** refreshTimeout
 
 ### Cookie `access`
 
-- **Назначение:** хранит JWT access токен
-- **Path:** `{prefix}` или `/` если prefix пустой
-- **Domain:** не задаётся (host-only)
-- **HttpOnly:** `false` (доступен для JavaScript)
-- **Secure:** настраивается при инициализации
+- **Purpose:** JWT access token
+- **Path:** `{prefix}` or `/` if prefix is empty
+- **Domain:** unset (host-only)
+- **HttpOnly:** `false` (available to JavaScript)
+- **Secure:** configured at init
 - **SameSite:** `Lax`
-- **Время жизни:** accessTimeout
+- **Lifetime:** accessTimeout
 
-**Примечание:** При использовании префикса `/api`:
-- Cookie `session` будет доступен только для путей `/api/auth/*`
-- Cookie `access` будет доступен для всех путей `/api/*`
+**Note:** With prefix `/api`:
+- Cookie `session` is sent only for `/api/auth/*`
+- Cookie `access` is sent for all `/api/*`
 
-## Хранилища
+## Stores
 
 ### Memory Store
 
-In-memory хранилище на основе `sync.Map`. Подходит для разработки и небольших приложений.
+In-memory store based on `sync.Map`. Suitable for development and small apps.
 
-**Преимущества:**
-- Не требует внешних зависимостей
-- Быстрое
-- Простое в использовании
+**Pros:**
+- No external dependencies
+- Fast
+- Simple
 
-**Недостатки:**
-- Данные теряются при перезапуске
-- Не подходит для кластерных развертываний
-- Ограничено памятью одного процесса
+**Cons:**
+- Data is lost on restart
+- Not suitable for clustered deployments
+- Limited to one process memory
 
-**Использование:**
+**Usage:**
 ```go
 store := store.NewMemoryStore[jwt.MapClaims]()
 ```
 
 ### Redis Store
 
-Хранилище на основе Redis. Подходит для production и кластерных развертываний.
+Redis-backed store. Suitable for production and clustered deployments.
 
-**Преимущества:**
-- Данные сохраняются при перезапуске
-- Поддержка кластерных развертываний
-- Автоматическое истечение сессий (TTL)
-- Масштабируемость
+**Pros:**
+- Data survives restart
+- Cluster-friendly
+- Automatic session expiry (TTL)
+- Scalable
 
-**Недостатки:**
-- Требует запущенный Redis сервер
-- Дополнительная сетевая задержка
+**Cons:**
+- Requires a running Redis server
+- Extra network latency
 
-**Использование:**
+**Usage:**
 ```go
 redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
     Addr:     "localhost:6379",
@@ -396,46 +393,46 @@ redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
 defer redisStore.Close()
 ```
 
-`Create` с неположительным TTL (`Expired` в прошлом) возвращает ошибку, сессия не записывается.
+`Create` with a non-positive TTL (`Expired` in the past) returns an error; the session is not written.
 
-**Формат ключей в Redis:**
+**Redis key format:**
 ```
 session:{refresh-token-uuid}
 ```
 
-## Безопасность
+## Security
 
-### Рекомендации
+### Recommendations
 
-1. **Использование HTTPS:**
+1. **Use HTTPS:**
    ```go
    sessions.New("", secret, accessTimeout, refreshTimeout, true, store)
    ```
-   Установите `secure` в `true` для production окружения.
+   Set `secure` to `true` in production.
 
-2. **Секретный ключ:**
-   - Используйте криптографически стойкий случайный ключ
-   - Минимум 32 байта
-   - Храните в переменных окружения, не в коде
+2. **Secret key:**
+   - Use a cryptographically strong random key
+   - At least 32 bytes
+   - Keep it in environment variables, not in code
 
-3. **Время жизни токенов:**
-   - Access токен: 15-30 минут (короткий срок)
-   - Refresh токен: 1-7 дней (длительный срок)
+3. **Token lifetime:**
+   - Access token: 15–30 minutes (short)
+   - Refresh token: 1–7 days (long)
 
-4. **Проверка устройств:**
-   В текущей версии информация о устройстве сохраняется, но не проверяется при обновлении. 
-   В будущих версиях планируется добавить проверку (см. TODO в коде).
+4. **Device checks:**
+   Device info is stored but not verified on refresh.
+   Verification is planned (see the TODO in the code).
 
-### Защита от атак
+### Attack surface
 
-- **CSRF:** используется SameSite=Lax для cookies
-- **XSS:** refresh токен хранится в HttpOnly cookie
-- **Session Fixation:** при создании новой сессии старая удаляется
-- **Token Replay:** короткое время жизни access токенов
+- **CSRF:** SameSite=Lax on cookies
+- **XSS:** refresh token is in an HttpOnly cookie
+- **Session Fixation:** starting a new session deletes the old one
+- **Token Replay:** short-lived access tokens
 
-## Примеры использования
+## Usage examples
 
-### Пользовательская структура Claims
+### Custom claims
 
 ```go
 type CustomClaims struct {
@@ -445,13 +442,13 @@ type CustomClaims struct {
     jwt.RegisteredClaims
 }
 
-// В middleware
+// In middleware
 api.Use(sessions.JWTWithRedirect[*CustomClaims](
     "/auth/refresh",
     []byte("secret"),
 ))
 
-// В обработчике
+// In a handler
 func handler(c *echo.Context) error {
     user, _ := echo.ContextGet[*jwt.Token](c, "user")
     claims := user.Claims.(*CustomClaims)
@@ -463,7 +460,7 @@ func handler(c *echo.Context) error {
 }
 ```
 
-### Логирование сессий
+### Session logging
 
 ```go
 type LoggingStore struct {
@@ -492,82 +489,82 @@ func (l *LoggingStore) Delete(token string) error {
 }
 ```
 
-## Тестирование
+## Testing
 
-Проект включает comprehensive тесты для всех компонентов.
+The project includes tests for all components.
 
-### Запуск тестов
+### Running tests
 
 ```bash
-# Все тесты
+# All tests
 go test ./...
 
-# С покрытием
+# With coverage
 go test -cover ./...
 
-# Генерация отчета о покрытии
+# Coverage report
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
-### Структура тестов
+### Test layout
 
-- `sessions_test.go` - тесты основного функционала
-- `middleware_test.go` - тесты middleware
-- `store/memory_test.go` - тесты memory хранилища
-- `store/redis_test.go` - тесты Redis хранилища (с использованием miniredis)
+- `sessions_test.go` — core behavior
+- `middleware_test.go` — middleware
+- `store/memory_test.go` — memory store
+- `store/redis_test.go` — Redis store (miniredis)
 
-## Устранение проблем
+## Troubleshooting
 
-### Сессия не создается
+### Session is not created
 
-**Проблема:** После вызова `Start()` cookies не устанавливаются.
+**Problem:** After `Start()`, cookies are not set.
 
-**Решение:**
-- Cookies host-only (без `Domain`) — браузер привязывает их к текущему хосту, без порта в атрибуте
-- Убедитесь, что `Secure` флаг соответствует протоколу (false для HTTP, true для HTTPS)
+**Fix:**
+- Cookies are host-only (no `Domain`) — the browser binds them to the current host, without a port in the attribute
+- Make sure the `Secure` flag matches the protocol (false for HTTP, true for HTTPS)
 
-### Бесконечный редирект
+### Infinite redirect
 
-**Проблема:** Запрос постоянно редиректится на `/auth/refresh`.
+**Problem:** The request keeps redirecting to `/auth/refresh`.
 
-**Решение:**
-- Проверьте, что refresh токен существует в хранилище
-- Убедитесь, что refresh токен не истек
-- Проверьте path для cookie `session` — он должен быть `{prefix}/auth`
-- Хендлер refresh должен быть `POST /…/auth/refresh/*uri`
+**Fix:**
+- Check that the refresh token exists in the store
+- Check that the refresh token has not expired
+- Check the path for cookie `session` — it must be `{prefix}/auth`
+- The refresh handler must be `POST /…/auth/refresh/*uri`
 
-### Redis ошибки подключения
+### Redis connection errors
 
-**Проблема:** `connection refused` при использовании Redis.
+**Problem:** `connection refused` when using Redis.
 
-**Решение:**
+**Fix:**
 ```bash
-# Проверьте, что Redis запущен
+# Check that Redis is running
 redis-cli ping
 
-# Запустите Redis если необходимо
+# Start Redis if needed
 redis-server
 
-# Проверьте настройки подключения
+# Check connection settings
 redis-cli -h localhost -p 6379
 ```
 
-### Access токен не читается JavaScript
+### Access token is not visible to JavaScript
 
-**Проблема:** `document.cookie` не показывает access токен.
+**Problem:** `document.cookie` does not show the access token.
 
-**Решение:**
-- Cookie `access` имеет `HttpOnly: false`, поэтому должен быть доступен
-- Проверьте, что вы на правильном домене и path (`/`)
-- Используйте DevTools браузера для проверки cookies
+**Fix:**
+- Cookie `access` has `HttpOnly: false`, so it should be visible
+- Check that you are on the correct domain and path (`/`)
+- Use browser DevTools to inspect cookies
 
-## Производительность
+## Performance
 
-### Рекомендации
+### Recommendations
 
-1. **Redis Connection Pooling:** 
-   Клиент go-redis автоматически управляет пулом соединений. Настройте размер пула для высоконагруженных приложений:
+1. **Redis connection pooling:**
+   go-redis manages a connection pool. Tune pool size for high-load apps:
    
    ```go
    redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
@@ -578,52 +575,51 @@ redis-cli -h localhost -p 6379
    defer redisStore.Close()
    ```
 
-2. **Memory Store Ограничения:**
-   Для большого количества сессий рассмотрите периодическую очистку истекших сессий.
+2. **Memory Store limits:**
+   For a large number of sessions, consider periodic cleanup of expired sessions.
 
-3. **Оптимизация времени жизни:**
-   - Балансируйте между безопасностью и удобством
-   - Для критичных операций требуйте повторную аутентификацию
+3. **TTL trade-offs:**
+   - Balance security and convenience
+   - Require re-authentication for sensitive operations
 
 ## Roadmap
 
-- [ ] Проверка устройств при обновлении сессии
-- [ ] Поддержка множественных сессий с одного аккаунта
-- [ ] Периодическая очистка истекших сессий в Memory Store
-- [ ] Поддержка дополнительных хранилищ (PostgreSQL, MongoDB)
-- [ ] Rate limiting для операций с сессиями
-- [ ] Webhook уведомления о событиях сессий
+- [ ] Device checks on session refresh
+- [ ] Multiple sessions per account
+- [ ] Periodic cleanup of expired sessions in Memory Store
+- [ ] Additional stores (PostgreSQL, MongoDB)
+- [ ] Rate limiting for session operations
+- [ ] Webhooks for session events
 
-## Участие в разработке
+## Contributing
 
-Приветствуются pull requests. Для значительных изменений сначала откройте issue для обсуждения.
+Pull requests are welcome. For substantial changes, open an issue first.
 
-### Процесс разработки
+### Workflow
 
-1. Fork репозитория
-2. Создайте feature ветку (`git checkout -b feature/AmazingFeature`)
-3. Commit изменения (`git commit -m 'Add some AmazingFeature'`)
-4. Push в ветку (`git push origin feature/AmazingFeature`)
-5. Откройте Pull Request
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit (`git commit -m 'Add some AmazingFeature'`)
+4. Push (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-### Запуск тестов перед PR
+### Tests before a PR
 
 ```bash
 go test -v -race -coverprofile=coverage.out ./...
 go vet ./...
 ```
 
-## Авторы
+## Authors
 
 - [@mrFokin](https://github.com/mrFokin)
 
-## Поддержка
+## Support
 
-Если у вас есть вопросы или проблемы, пожалуйста:
-- Откройте [issue](https://github.com/mrFokin/sessions/issues)
-- Ознакомьтесь с существующими issues и discussions
+If you have questions or problems:
+- Open an [issue](https://github.com/mrFokin/sessions/issues)
+- Check existing issues and discussions
 
-## Лицензия
+## License
 
-Проект распространяется под лицензией MIT.
-
+MIT

@@ -13,23 +13,29 @@ import (
 
 const redisOpTimeout = 3 * time.Second
 
+// ErrNonPositiveTTL is returned by RedisStore.Create when Session.Expired
+// is not in the future.
 var ErrNonPositiveTTL = errors.New("session ttl must be positive")
 
-type redisStore[C jwt.Claims] struct {
+// RedisStore is a Redis-backed SessionStore. Keys are session:{token} with TTL
+// until Session.Expired.
+type RedisStore[C jwt.Claims] struct {
 	client *redis.Client
 }
 
-func NewRedisStore[C jwt.Claims](opt *redis.Options) *redisStore[C] {
-	return &redisStore[C]{
+// NewRedisStore returns a RedisStore using opt. Call Close when finished.
+func NewRedisStore[C jwt.Claims](opt *redis.Options) *RedisStore[C] {
+	return &RedisStore[C]{
 		client: redis.NewClient(opt),
 	}
 }
 
-func (s *redisStore[C]) Close() error {
+// Close closes the underlying Redis client.
+func (s *RedisStore[C]) Close() error {
 	return s.client.Close()
 }
 
-func (s *redisStore[C]) ctx() (context.Context, context.CancelFunc) {
+func (s *RedisStore[C]) ctx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), redisOpTimeout)
 }
 
@@ -37,7 +43,9 @@ func sessionKey(token string) string {
 	return "session:" + token
 }
 
-func (s *redisStore[C]) Create(session sessions.Session[C]) error {
+// Create stores session in Redis. It returns ErrNonPositiveTTL when
+// Session.Expired is not in the future.
+func (s *RedisStore[C]) Create(session sessions.Session[C]) error {
 	ctx, cancel := s.ctx()
 	defer cancel()
 
@@ -54,7 +62,9 @@ func (s *redisStore[C]) Create(session sessions.Session[C]) error {
 	return s.client.Set(ctx, sessionKey(session.Token), data, ttl).Err()
 }
 
-func (s *redisStore[C]) Read(refreshToken string) (session sessions.Session[C], err error) {
+// Read loads a session by refresh token.
+// It returns sessions.ErrSessionNotFound if the key is missing.
+func (s *RedisStore[C]) Read(refreshToken string) (session sessions.Session[C], err error) {
 	ctx, cancel := s.ctx()
 	defer cancel()
 
@@ -74,7 +84,8 @@ func (s *redisStore[C]) Read(refreshToken string) (session sessions.Session[C], 
 	return
 }
 
-func (s *redisStore[C]) Delete(refreshToken string) error {
+// Delete removes a session by refresh token.
+func (s *RedisStore[C]) Delete(refreshToken string) error {
 	ctx, cancel := s.ctx()
 	defer cancel()
 	return s.client.Del(ctx, sessionKey(refreshToken)).Err()
