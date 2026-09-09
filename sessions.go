@@ -13,35 +13,61 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
+// ErrSessionNotFound is returned by SessionStore.Read when no session exists
+// for the given refresh token.
 var (
 	ErrSessionNotFound = errors.New("session not found")
 )
 
+// Sessions manages cookie-based user sessions for an Echo application.
 type Sessions[C jwt.Claims] interface {
+	// Start creates a new session, replacing any existing session cookie.
+	// It issues a JWT access cookie and an HttpOnly refresh cookie named session.
 	Start(c *echo.Context, claims C) error
+	// Stop deletes the current session from the store and clears both cookies.
 	Stop(c *echo.Context) error
+	// Refresh rotates the session using the refresh cookie and redirects 307
+	// to the same-origin path in the *uri route parameter.
 	Refresh(c *echo.Context) error
 }
 
+// SessionStore persists sessions keyed by refresh token.
 type SessionStore[C jwt.Claims] interface {
+	// Create stores a session. RedisStore requires a positive TTL
+	// (Session.Expired in the future).
 	Create(Session[C]) error
+	// Read loads a session by refresh token.
+	// It returns ErrSessionNotFound if the session does not exist.
 	Read(refreshToken string) (Session[C], error)
+	// Delete removes a session by refresh token.
 	Delete(refreshToken string) error
 }
 
+// Device is the client fingerprint captured at session creation.
 type Device struct {
-	IP        string
-	UserAgent string
+	IP        string // client address from Echo RealIP
+	UserAgent string // request User-Agent
 }
 
+// Session is a stored refresh session.
 type Session[C jwt.Claims] struct {
-	Token   string
-	Claims  C
-	Device  Device
-	Created time.Time
-	Expired time.Time
+	Token   string    // refresh token (UUID)
+	Claims  C         // JWT claims copied into the access token
+	Device  Device    // client captured at Start
+	Created time.Time // session creation time
+	Expired time.Time // refresh expiry; used as Redis TTL
 }
 
+// New returns a session manager.
+//
+// prefix is the cookie path prefix ("" for the site root). A non-empty value
+// without a leading slash is normalized (api → /api); a trailing slash is
+// stripped. The session cookie path is {prefix}/auth; the access cookie path
+// is {prefix} or / when prefix is empty.
+//
+// secret signs JWTs. accessTimeout and refreshTimeout set cookie and token
+// lifetimes. secure sets the Secure flag (true for HTTPS). store persists
+// refresh sessions.
 func New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore[C]) Sessions[C] {
 	return &sessions[C]{
 		Prefix:         normalizePrefix(prefix),

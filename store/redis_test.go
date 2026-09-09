@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestRedis(t testing.TB) (*redisStore[jwt.MapClaims], *miniredis.Miniredis) {
+func newTestRedis(t testing.TB) (*RedisStore[jwt.MapClaims], *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	s := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()})
