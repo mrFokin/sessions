@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-09
+
 ### Added
 
 - Package overview, godoc on the exported API, and `Example*` functions for [pkg.go.dev](https://pkg.go.dev/github.com/mrFokin/sessions/v2)
@@ -33,5 +35,6 @@ Echo v5 and typed claims. For Echo v4 stay on [`v1.0.0`](https://github.com/mrFo
 
 - Custom claim structs without `jwt.MapClaims`, e.g. `sessions.New[*CustomClaims](...)` and `JWTWithRedirect[*CustomClaims]`
 
-[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/mrFokin/sessions/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mrFokin/sessions/compare/v1.0.0...v2.0.0
