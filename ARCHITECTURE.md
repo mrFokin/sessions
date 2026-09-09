@@ -56,10 +56,10 @@
 Основной интерфейс для работы с сессиями:
 
 ```go
-type Sessions interface {
-    Start(c echo.Context, claims jwt.MapClaims) error
-    Stop(c echo.Context) error
-    Refresh(c echo.Context) error
+type Sessions[C jwt.Claims] interface {
+    Start(c *echo.Context, claims C) error
+    Stop(c *echo.Context) error
+    Refresh(c *echo.Context) error
 }
 ```
 
@@ -76,9 +76,9 @@ type Sessions interface {
 Интерфейс для хранения сессий:
 
 ```go
-type SessionStore interface {
-    Create(Session) error
-    Read(refreshToken string) (Session, error)
+type SessionStore[C jwt.Claims] interface {
+    Create(Session[C]) error
+    Read(refreshToken string) (Session[C], error)
     Delete(refreshToken string) error
 }
 ```
@@ -95,7 +95,7 @@ type SessionStore interface {
 ### 3. Middleware
 
 ```go
-func JWTWithRedirect(path string, secret []byte, claims jwt.Claims) echo.MiddlewareFunc
+func JWTWithRedirect[C jwt.Claims](path string, secret []byte) echo.MiddlewareFunc
 ```
 
 **Назначение:**
@@ -106,7 +106,7 @@ func JWTWithRedirect(path string, secret []byte, claims jwt.Claims) echo.Middlew
 **Особенности:**
 - Использует `echo-jwt` библиотеку
 - Кастомный error handler для редиректов
-- Поддержка пользовательских claims структур (новый экземпляр на запрос)
+- Тип claims задаётся параметром `C`, новый экземпляр на запрос
 
 ## Паттерны проектирования
 
@@ -116,11 +116,11 @@ func JWTWithRedirect(path string, secret []byte, claims jwt.Claims) echo.Middlew
 
 ```go
 // Клиент выбирает стратегию хранения
-var store SessionStore
+var store SessionStore[jwt.MapClaims]
 if isProduction {
-    store = NewRedisStore(redisOpts)
+    store = NewRedisStore[jwt.MapClaims](redisOpts)
 } else {
-    store = NewMemoryStore()
+    store = NewMemoryStore[jwt.MapClaims]()
 }
 
 sessionManager := sessions.New("", secret, accessTimeout, refreshTimeout, secure, store)
@@ -136,9 +136,9 @@ sessionManager := sessions.New("", secret, accessTimeout, refreshTimeout, secure
 Инициализация через функцию `New`:
 
 ```go
-func New(prefix string, secret []byte, accessTimeout time.Duration, 
+func New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration, 
          refreshTimeout time.Duration, secure bool, 
-         store SessionStore) Sessions
+         store SessionStore[C]) Sessions[C]
 ```
 
 **Преимущества:**
@@ -166,7 +166,7 @@ sessionManager.Start(c, claims)
 Метод `start` используется как в `Start`, так и в `Refresh`:
 
 ```go
-func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
+func (s *sessions[C]) Start(c *echo.Context, claims C) error {
     // Специфичная логика для Start
     current, err := c.Cookie("session")
     if err == nil && current != nil {
@@ -177,7 +177,7 @@ func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
     return s.start(c, claims)
 }
 
-func (s *sessions) Refresh(c echo.Context) error {
+func (s *sessions[C]) Refresh(c *echo.Context) error {
     // Специфичная логика для Refresh
     // ...
     
@@ -319,7 +319,7 @@ Domain не задаётся: cookie host-only. `Host` с портом в `Domai
 **Решение:** Redis Store
 ```go
 // Все инстансы приложения используют общий Redis
-redisStore := store.NewRedisStore(&redis.Options{
+redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
     Addr: "redis-cluster:6379",
 })
 ```
@@ -368,14 +368,14 @@ redisStore := store.NewRedisStore(&redis.Options{
 
 ### 3. MapClaims vs Typed Claims
 
-**Решение:** MapClaims по умолчанию, но поддержка typed
+**Решение:** параметр типа `C jwt.Claims` на Sessions, Session, SessionStore и JWTWithRedirect
 **Причины:**
-- Гибкость для разных use cases
-- Простота использования
-- Обратная совместимость с jwt-go
+- Один тип claims от `Start` до middleware
+- Compile-time проверка для структурированных claims
+- `jwt.MapClaims` остаётся допустимым `C`
 
 **Компромисс:**
-- Отсутствие compile-time проверки типов для MapClaims
+- Тип `C` нужно указывать при `New` / store / middleware
 
 ### 4. Одна сессия vs Множественные
 

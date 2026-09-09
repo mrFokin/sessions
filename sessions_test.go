@@ -8,42 +8,42 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-type initSessionStoreMock func(*mockSessionStore)
+type initSessionStoreMock func(*mockSessionStore[jwt.MapClaims])
 
-type mockSessionStore struct {
+type mockSessionStore[C jwt.Claims] struct {
 	mock.Mock
 }
 
-func (m *mockSessionStore) Create(session Session) error {
+func (m *mockSessionStore[C]) Create(session Session[C]) error {
 	args := m.Called(session)
 	return args.Error(0)
 }
 
-func (m *mockSessionStore) Read(refreshToken string) (Session, error) {
+func (m *mockSessionStore[C]) Read(refreshToken string) (Session[C], error) {
 	args := m.Called(refreshToken)
-	return args.Get(0).(Session), args.Error(1)
+	return args.Get(0).(Session[C]), args.Error(1)
 }
 
-func (m *mockSessionStore) Delete(refreshToken string) error {
+func (m *mockSessionStore[C]) Delete(refreshToken string) error {
 	args := m.Called(refreshToken)
 	return args.Error(0)
 }
 
 func TestStart(t *testing.T) {
 	testCases := []struct {
-		when   string
+		when    string
 		current string
-		err    error
-		secure bool
-		prefix string
-		access *http.Cookie
+		err     error
+		secure  bool
+		prefix  string
+		access  *http.Cookie
 		refresh *http.Cookie
-		initSS initSessionStoreMock
+		initSS  initSessionStoreMock
 	}{
 		{
 			when:    "Session.Start вернул неизвестную ошибку",
@@ -51,7 +51,7 @@ func TestStart(t *testing.T) {
 			err:     errors.New("Unknown error"),
 			access:  &http.Cookie{MaxAge: -1, Secure: false, Path: "/"},
 			refresh: &http.Cookie{MaxAge: -1, Secure: false, Path: "/auth"},
-			initSS: func(m *mockSessionStore) {
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
 				m.On("Create", mock.Anything).Return(errors.New("Unknown error"))
 			},
 		},
@@ -62,7 +62,7 @@ func TestStart(t *testing.T) {
 			secure:  false,
 			access:  &http.Cookie{MaxAge: 300, Secure: false, Path: "/"},
 			refresh: &http.Cookie{MaxAge: 600, Secure: false, Path: "/auth"},
-			initSS: func(m *mockSessionStore) {
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
 			},
@@ -74,7 +74,7 @@ func TestStart(t *testing.T) {
 			secure:  true,
 			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/"},
 			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/auth"},
-			initSS: func(m *mockSessionStore) {
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
 			},
@@ -87,7 +87,7 @@ func TestStart(t *testing.T) {
 			prefix:  "/api",
 			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/api"},
 			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/api/auth"},
-			initSS: func(m *mockSessionStore) {
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
 			},
@@ -100,7 +100,7 @@ func TestStart(t *testing.T) {
 			prefix:  "api/",
 			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/api"},
 			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/api/auth"},
-			initSS: func(m *mockSessionStore) {
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
 				m.On("Create", mock.Anything).Return(nil)
 			},
 		},
@@ -116,7 +116,7 @@ func TestStart(t *testing.T) {
 		req.Header.Set(echo.HeaderCookie, tc.current)
 		rec := httptest.NewRecorder()
 
-		mSessionStore := &mockSessionStore{}
+		mSessionStore := &mockSessionStore[jwt.MapClaims]{}
 		tc.initSS(mSessionStore)
 
 		h := New(tc.prefix, []byte("secret"), time.Minute*5, time.Minute*10, tc.secure, mSessionStore)
@@ -177,17 +177,34 @@ func TestNormalizePrefix(t *testing.T) {
 
 func TestStartUsesRealIP(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
-	req.Header.Set("X-Real-IP", "10.1.2.3")
+	req.RemoteAddr = "10.1.2.3:1234"
 	rec := httptest.NewRecorder()
 
-	mSessionStore := &mockSessionStore{}
-	mSessionStore.On("Create", mock.MatchedBy(func(s Session) bool {
+	mSessionStore := &mockSessionStore[jwt.MapClaims]{}
+	mSessionStore.On("Create", mock.MatchedBy(func(s Session[jwt.MapClaims]) bool {
 		return s.Device.IP == "10.1.2.3"
 	})).Return(nil)
 
 	h := New("", []byte("secret"), time.Minute, time.Hour, false, mSessionStore)
 	c := echo.New().NewContext(req, rec)
 	assert.NoError(t, h.Start(c, jwt.MapClaims{"Name": "Jhon Doe"}))
+	mSessionStore.AssertExpectations(t)
+}
+
+func TestStartTypedClaims(t *testing.T) {
+	mSessionStore := &mockSessionStore[*mockClaims]{}
+	mSessionStore.On("Create", mock.MatchedBy(func(s Session[*mockClaims]) bool {
+		return s.Claims != nil && s.Claims.Name == "Jhon Doe" && s.Claims.ExpiresAt != nil
+	})).Return(nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(req, rec)
+
+	src := &mockClaims{Name: "Jhon Doe"}
+	h := New("", []byte("secret"), time.Minute, time.Hour, false, mSessionStore)
+	assert.NoError(t, h.Start(c, src))
+	assert.Nil(t, src.ExpiresAt)
 	mSessionStore.AssertExpectations(t)
 }
 
@@ -202,13 +219,13 @@ func TestStop(t *testing.T) {
 			when:    "Нет cookie с сессией",
 			current: "",
 			err:     nil,
-			initSS:  func(m *mockSessionStore) {},
+			initSS:  func(m *mockSessionStore[jwt.MapClaims]) {},
 		},
 		{
 			when:    "Если все корректно",
 			current: "session=123456",
 			err:     nil,
-			initSS: func(m *mockSessionStore) {
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
 				m.On("Delete", "123456").Return(nil)
 			},
 		},
@@ -224,10 +241,10 @@ func TestStop(t *testing.T) {
 		req.Header.Set(echo.HeaderCookie, tc.current)
 		rec := httptest.NewRecorder()
 
-		mSessionStore := &mockSessionStore{}
+		mSessionStore := &mockSessionStore[jwt.MapClaims]{}
 		tc.initSS(mSessionStore)
 
-		h := sessions{
+		h := sessions[jwt.MapClaims]{
 			Prefix: "",
 			Secret: []byte("secret"),
 			Store:  mSessionStore,
@@ -303,14 +320,14 @@ func TestRefresh(t *testing.T) {
 			when:    "Нет cookie с сессией",
 			current: "",
 			err:     echo.ErrUnauthorized,
-			initSS:  func(m *mockSessionStore) {},
+			initSS:  func(m *mockSessionStore[jwt.MapClaims]) {},
 		},
 		{
 			when:    "Если сессии нет в SessionStore",
 			current: "session=123456",
 			err:     echo.ErrUnauthorized,
-			initSS: func(m *mockSessionStore) {
-				m.On("Read", "123456").Return(Session{}, ErrSessionNotFound)
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				m.On("Read", "123456").Return(Session[jwt.MapClaims]{}, ErrSessionNotFound)
 			},
 		},
 		{
@@ -319,8 +336,8 @@ func TestRefresh(t *testing.T) {
 			err:     echo.ErrUnauthorized,
 			access:  &http.Cookie{MaxAge: -1, Secure: true},
 			refresh: &http.Cookie{MaxAge: -1, Secure: true},
-			initSS: func(m *mockSessionStore) {
-				s := Session{
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				s := Session[jwt.MapClaims]{
 					Token:   "123456",
 					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
 					Expired: time.Now().Add(-1 * time.Hour),
@@ -333,8 +350,8 @@ func TestRefresh(t *testing.T) {
 			when:    "Если текушая сессия не истекла, но SessionStore.Create вернул неизвестную ошибку",
 			current: "session=123456",
 			err:     errors.New("Unknown errror"),
-			initSS: func(m *mockSessionStore) {
-				s := Session{
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				s := Session[jwt.MapClaims]{
 					Token:   "123456",
 					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
 					Expired: time.Now().Add(time.Hour),
@@ -351,8 +368,8 @@ func TestRefresh(t *testing.T) {
 			access:   &http.Cookie{MaxAge: 300, Secure: true},
 			refresh:  &http.Cookie{MaxAge: 600, Secure: true},
 			redirect: "/api/v2",
-			initSS: func(m *mockSessionStore) {
-				s := Session{
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				s := Session[jwt.MapClaims]{
 					Token:   "123456",
 					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
 					Expired: time.Now().Add(time.Hour),
@@ -367,8 +384,8 @@ func TestRefresh(t *testing.T) {
 			current: "session=123456",
 			uri:     "/evil.com",
 			err:     echo.ErrBadRequest,
-			initSS: func(m *mockSessionStore) {
-				s := Session{
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				s := Session[jwt.MapClaims]{
 					Token:   "123456",
 					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
 					Expired: time.Now().Add(time.Hour),
@@ -388,15 +405,14 @@ func TestRefresh(t *testing.T) {
 		req.Header.Set(echo.HeaderCookie, tc.current)
 		rec := httptest.NewRecorder()
 
-		mSessionStore := &mockSessionStore{}
+		mSessionStore := &mockSessionStore[jwt.MapClaims]{}
 		tc.initSS(mSessionStore)
 
 		h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
 
 		c := e.NewContext(req, rec)
 		c.SetPath("/auth/refresh/*uri")
-		c.SetParamNames("uri")
-		c.SetParamValues(tc.uri)
+		c.SetPathValues(echo.PathValues{{Name: "uri", Value: tc.uri}})
 
 		err := h.Refresh(c)
 
@@ -434,4 +450,28 @@ func TestRefresh(t *testing.T) {
 			assert.Equal(t, tc.redirect, rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
 		}
 	}
+}
+
+func TestRefreshTypedClaims(t *testing.T) {
+	mSessionStore := &mockSessionStore[*mockClaims]{}
+	mSessionStore.On("Read", "123456").Return(Session[*mockClaims]{
+		Token:   "123456",
+		Claims:  &mockClaims{Name: "Jhon Doe"},
+		Expired: time.Now().Add(time.Hour),
+	}, nil)
+	mSessionStore.On("Create", mock.MatchedBy(func(s Session[*mockClaims]) bool {
+		return s.Claims != nil && s.Claims.Name == "Jhon Doe"
+	})).Return(nil)
+	mSessionStore.On("Delete", "123456").Return(nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set(echo.HeaderCookie, "session=123456")
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(req, rec)
+	c.SetPathValues(echo.PathValues{{Name: "uri", Value: "api/v2"}})
+
+	h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
+	assert.NoError(t, h.Refresh(c))
+	assert.Equal(t, "/api/v2", rec.Header().Get(echo.HeaderLocation))
+	mSessionStore.AssertExpectations(t)
 }

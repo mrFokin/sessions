@@ -6,23 +6,23 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/mrFokin/sessions"
+	"github.com/mrFokin/sessions/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestRedis(t testing.TB) (*redisStore, *miniredis.Miniredis) {
+func newTestRedis(t testing.TB) (*redisStore[jwt.MapClaims], *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	s := NewRedisStore(&redis.Options{Addr: mr.Addr()})
+	s := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = s.Close() })
 	return s, mr
 }
 
-func testSession(token string, ttl time.Duration) sessions.Session {
+func testSession(token string, ttl time.Duration) sessions.Session[jwt.MapClaims] {
 	now := time.Now()
-	return sessions.Session{
+	return sessions.Session[jwt.MapClaims]{
 		Token: token,
 		Claims: jwt.MapClaims{
 			"user_id": "123",
@@ -90,7 +90,7 @@ func TestRedisStore_TTLExpiration(t *testing.T) {
 
 func TestRedisStore_Close(t *testing.T) {
 	mr := miniredis.RunT(t)
-	s := NewRedisStore(&redis.Options{Addr: mr.Addr()})
+	s := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()})
 	require.NoError(t, s.Close())
 	err := s.Create(testSession("after-close", time.Hour))
 	assert.Error(t, err)

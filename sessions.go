@@ -10,22 +10,22 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 var (
 	ErrSessionNotFound = errors.New("session not found")
 )
 
-type Sessions interface {
-	Start(c echo.Context, claims jwt.MapClaims) error
-	Stop(c echo.Context) error
-	Refresh(c echo.Context) error
+type Sessions[C jwt.Claims] interface {
+	Start(c *echo.Context, claims C) error
+	Stop(c *echo.Context) error
+	Refresh(c *echo.Context) error
 }
 
-type SessionStore interface {
-	Create(Session) error
-	Read(refreshToken string) (Session, error)
+type SessionStore[C jwt.Claims] interface {
+	Create(Session[C]) error
+	Read(refreshToken string) (Session[C], error)
 	Delete(refreshToken string) error
 }
 
@@ -34,16 +34,16 @@ type Device struct {
 	UserAgent string
 }
 
-type Session struct {
+type Session[C jwt.Claims] struct {
 	Token   string
-	Claims  jwt.MapClaims
+	Claims  C
 	Device  Device
 	Created time.Time
 	Expired time.Time
 }
 
-func New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions {
-	return &sessions{
+func New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore[C]) Sessions[C] {
+	return &sessions[C]{
 		Prefix:         normalizePrefix(prefix),
 		Secret:         secret,
 		AccessTimeout:  accessTimeout,
@@ -65,16 +65,16 @@ func normalizePrefix(prefix string) string {
 	return prefix
 }
 
-type sessions struct {
+type sessions[C jwt.Claims] struct {
 	Prefix         string
 	Secret         []byte
 	AccessTimeout  time.Duration
 	RefreshTimeout time.Duration
 	Secure         bool
-	Store          SessionStore
+	Store          SessionStore[C]
 }
 
-func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
+func (s *sessions[C]) Start(c *echo.Context, claims C) error {
 	current, err := c.Cookie("session")
 	if err == nil && current != nil {
 		if err := s.Store.Delete(current.Value); err != nil {
@@ -89,7 +89,7 @@ func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
 	return nil
 }
 
-func (s *sessions) Stop(c echo.Context) error {
+func (s *sessions[C]) Stop(c *echo.Context) error {
 	current, err := c.Cookie("session")
 	if err == nil && current != nil {
 		if err := s.Store.Delete(current.Value); err != nil {
@@ -101,7 +101,7 @@ func (s *sessions) Stop(c echo.Context) error {
 	return nil
 }
 
-func (s *sessions) Refresh(c echo.Context) error {
+func (s *sessions[C]) Refresh(c *echo.Context) error {
 	cookie, err := c.Cookie("session")
 	if err != nil || cookie == nil {
 		return echo.ErrUnauthorized
@@ -163,24 +163,18 @@ func redirectPath(param string) (string, error) {
 	return p, nil
 }
 
-func copyClaims(claims jwt.MapClaims) jwt.MapClaims {
-	out := make(jwt.MapClaims, len(claims))
-	for k, v := range claims {
-		out[k] = v
+func (s *sessions[C]) start(c *echo.Context, claims C) error {
+	claims, err := cloneAndSetExp(claims, time.Now().Add(s.AccessTimeout))
+	if err != nil {
+		return err
 	}
-	return out
-}
-
-func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
-	claims = copyClaims(claims)
-	claims["exp"] = time.Now().Add(s.AccessTimeout).Unix()
 
 	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.Secret)
 	if err != nil {
 		return err
 	}
 
-	session := Session{
+	session := Session[C]{
 		Token:  uuid.NewString(),
 		Claims: claims,
 		Device: Device{
@@ -199,7 +193,7 @@ func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
 	return nil
 }
 
-func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken string) {
+func (s *sessions[C]) setCookies(c *echo.Context, accessToken string, refreshToken string) {
 	sessionPath := s.Prefix + "/auth"
 	accessPath := s.Prefix
 	if accessPath == "" {
@@ -229,7 +223,7 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 	})
 }
 
-func (s *sessions) clearCookies(c echo.Context) {
+func (s *sessions[C]) clearCookies(c *echo.Context) {
 	sessionPath := s.Prefix + "/auth"
 	accessPath := s.Prefix
 	if accessPath == "" {

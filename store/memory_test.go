@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/mrFokin/sessions"
+	"github.com/mrFokin/sessions/v2"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestMemoryStore_Create(t *testing.T) {
-	store := NewMemoryStore()
+	store := NewMemoryStore[jwt.MapClaims]()
 
-	session := sessions.Session{
+	session := sessions.Session[jwt.MapClaims]{
 		Token: "test-token-123",
 		Claims: jwt.MapClaims{
 			"user_id": "123",
@@ -33,7 +33,7 @@ func TestMemoryStore_Create(t *testing.T) {
 	// Проверяем, что сессия действительно сохранена
 	val, ok := store.sessions.Load(session.Token)
 	assert.True(t, ok, "Сессия должна быть сохранена в store")
-	assert.Equal(t, session, val.(sessions.Session), "Сохраненная сессия должна соответствовать оригиналу")
+	assert.Equal(t, session, val.(sessions.Session[jwt.MapClaims]), "Сохраненная сессия должна соответствовать оригиналу")
 }
 
 func TestMemoryStore_Read(t *testing.T) {
@@ -61,9 +61,9 @@ func TestMemoryStore_Read(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewMemoryStore()
+			store := NewMemoryStore[jwt.MapClaims]()
 
-			expectedSession := sessions.Session{
+			expectedSession := sessions.Session[jwt.MapClaims]{
 				Token: tc.existingToken,
 				Claims: jwt.MapClaims{
 					"user_id": "456",
@@ -94,10 +94,10 @@ func TestMemoryStore_Read(t *testing.T) {
 }
 
 func TestMemoryStore_Delete(t *testing.T) {
-	store := NewMemoryStore()
+	store := NewMemoryStore[jwt.MapClaims]()
 
 	token := "token-to-delete"
-	session := sessions.Session{
+	session := sessions.Session[jwt.MapClaims]{
 		Token: token,
 		Claims: jwt.MapClaims{
 			"user_id": "789",
@@ -127,7 +127,7 @@ func TestMemoryStore_Delete(t *testing.T) {
 }
 
 func TestMemoryStore_DeleteNonExisting(t *testing.T) {
-	store := NewMemoryStore()
+	store := NewMemoryStore[jwt.MapClaims]()
 
 	// Удаление несуществующей сессии не должно вызывать ошибку
 	err := store.Delete("non-existing-token")
@@ -135,8 +135,8 @@ func TestMemoryStore_DeleteNonExisting(t *testing.T) {
 }
 
 func TestMemoryStore_ConcurrentAccess(t *testing.T) {
-	store := NewMemoryStore()
-	
+	store := NewMemoryStore[jwt.MapClaims]()
+
 	const goroutines = 100
 	const iterations = 10
 
@@ -149,7 +149,7 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				token := generateToken(id, j)
-				session := sessions.Session{
+				session := sessions.Session[jwt.MapClaims]{
 					Token: token,
 					Claims: jwt.MapClaims{
 						"user_id": id,
@@ -198,7 +198,7 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Проверяем, что store не упал и работает
-	testSession := sessions.Session{
+	testSession := sessions.Session[jwt.MapClaims]{
 		Token:   "final-test-token",
 		Claims:  jwt.MapClaims{"test": "final"},
 		Device:  sessions.Device{IP: "127.0.0.1", UserAgent: "Final"},
@@ -224,34 +224,34 @@ func itoa(n int) string {
 	if n == 0 {
 		return "0"
 	}
-	
+
 	neg := n < 0
 	if neg {
 		n = -n
 	}
-	
+
 	buf := make([]byte, 0, 10)
 	for n > 0 {
 		buf = append(buf, byte('0'+n%10))
 		n /= 10
 	}
-	
+
 	if neg {
 		buf = append(buf, '-')
 	}
-	
+
 	// Разворачиваем
 	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
 		buf[i], buf[j] = buf[j], buf[i]
 	}
-	
+
 	return string(buf)
 }
 
 // Benchmark тесты для MemoryStore
 func BenchmarkMemoryStore_Create(b *testing.B) {
-	store := NewMemoryStore()
-	session := sessions.Session{
+	store := NewMemoryStore[jwt.MapClaims]()
+	session := sessions.Session[jwt.MapClaims]{
 		Token: "benchmark-token",
 		Claims: jwt.MapClaims{
 			"user_id": "bench-user",
@@ -272,8 +272,8 @@ func BenchmarkMemoryStore_Create(b *testing.B) {
 }
 
 func BenchmarkMemoryStore_Read(b *testing.B) {
-	store := NewMemoryStore()
-	session := sessions.Session{
+	store := NewMemoryStore[jwt.MapClaims]()
+	session := sessions.Session[jwt.MapClaims]{
 		Token: "benchmark-read-token",
 		Claims: jwt.MapClaims{
 			"user_id": "bench-user",
@@ -294,11 +294,11 @@ func BenchmarkMemoryStore_Read(b *testing.B) {
 }
 
 func BenchmarkMemoryStore_Delete(b *testing.B) {
-	store := NewMemoryStore()
-	
+	store := NewMemoryStore[jwt.MapClaims]()
+
 	// Предварительно создаем токены
 	for i := 0; i < b.N; i++ {
-		session := sessions.Session{
+		session := sessions.Session[jwt.MapClaims]{
 			Token: "benchmark-delete-token-" + itoa(i),
 			Claims: jwt.MapClaims{
 				"user_id": "bench-user",
@@ -320,8 +320,8 @@ func BenchmarkMemoryStore_Delete(b *testing.B) {
 }
 
 func BenchmarkMemoryStore_ConcurrentRead(b *testing.B) {
-	store := NewMemoryStore()
-	session := sessions.Session{
+	store := NewMemoryStore[jwt.MapClaims]()
+	session := sessions.Session[jwt.MapClaims]{
 		Token: "concurrent-read-token",
 		Claims: jwt.MapClaims{
 			"user_id": "concurrent-user",
