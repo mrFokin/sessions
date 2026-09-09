@@ -235,7 +235,7 @@ func (s *sessions) Refresh(c echo.Context) error {
 ### Обновление токена (Refresh)
 
 ```
-1. GET /auth/refresh/api/profile
+1. POST /auth/refresh/api/profile
    Cookie: session=refresh_token
    ↓
 2. sessionManager.Refresh(c)
@@ -253,7 +253,7 @@ func (s *sessions) Refresh(c echo.Context) error {
    ↓
 8. Redirect 307 → /api/profile
    ↓
-9. Браузер автоматически повторяет запрос с новым access токеном
+9. Клиент повторяет исходный POST с новым access токеном
 ```
 
 ## Безопасность
@@ -356,15 +356,14 @@ redisStore := store.NewRedisStore(&redis.Options{
 
 ### 2. Redirect vs JSON Error
 
-**Решение:** Redirect для истекших токенов
+**Решение:** Redirect 307, когда cookie `access` нет
 **Причины:**
-- Прозрачное обновление для пользователя
-- Работает с обычными HTML формами
-- Упрощение фронтенд логики
+- Клиент с cookies и follow redirect обновляет сессию прозрачно
+- 307 сохраняет исходный POST JSON-RPC (метод и тело)
 
 **Компромисс:**
 - Дополнительный HTTP запрос
-- Не подходит для чисто API приложений
+- Редирект рассчитан на cookie-клиент, который ходит за 307; транспорт без cookie jar / без follow redirect автоматический refresh не получит
 
 ### 3. MapClaims vs Typed Claims
 

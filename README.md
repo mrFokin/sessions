@@ -71,7 +71,7 @@ func main() {
     })
     
     // Роут для обновления сессии
-    e.GET("/auth/refresh/:uri", sessionManager.Refresh)
+    e.POST("/auth/refresh/*uri", sessionManager.Refresh)
     
     // Роут для выхода
     e.POST("/auth/logout", func(c echo.Context) error {
@@ -114,6 +114,16 @@ sessionManager := sessions.New(
     redisStore,
 )
 ```
+
+## Ограничения
+
+Библиотека рассчитана на JSON-RPC по HTTP с cookies, а не на REST с query/fragment.
+
+- Метод RPC в теле запроса. URL — endpoint. После refresh в `Location` попадает только path из `*uri`; query, fragment и trailing slash не восстанавливаются и не поддерживаются.
+- `JWTWithRedirect` отвечает **307**. Клиент должен следовать редиректу, сохранить метод и тело, слать cookies (`credentials`). Транспорт без cookie jar или без follow redirect автоматический refresh не получит.
+- Хендлер refresh вешается как **POST** `/…/auth/refresh/*uri`. 307 с JSON-RPC POST иначе получит 405 на GET-роуте.
+- Cookie `session` имеет Path `{prefix}/auth`, поэтому URL refresh должен быть под этим путём — иначе refresh-токен не уйдёт.
+- TTL cookie `access` совпадает с `exp` JWT: браузер не шлёт протухший access. Триггер refresh — отсутствие cookie (`ErrJWTMissing`), не разбор истёкшего JWT.
 
 ## API документация
 
@@ -164,18 +174,18 @@ err := sessionManager.Stop(c)
 Обновляет истекший access токен используя refresh токен.
 
 **Параметры:**
-- Ожидает параметр пути `:uri` - URL для редиректа после обновления
+- Ожидает параметр пути `*uri` — path для редиректа после обновления (хвост исходного URL)
 
 **Поведение:**
 - Проверяет наличие refresh токена в cookie `session`
 - Загружает сессию из хранилища
 - Проверяет срок действия refresh токена
 - Создает новую сессию с теми же claims
-- Делает редирект на исходный URL
+- Делает редирект 307 на `/{uri}`
 
 **Маршрут:**
 ```go
-e.GET("/auth/refresh/:uri", sessionManager.Refresh)
+e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 ```
 
 ### Конструкторы
@@ -514,12 +524,13 @@ go tool cover -html=coverage.out
 
 ### Бесконечный редирект
 
-**Проблема:** Страница постоянно редиректится на `/auth/refresh`.
+**Проблема:** Запрос постоянно редиректится на `/auth/refresh`.
 
 **Решение:**
 - Проверьте, что refresh токен существует в хранилище
 - Убедитесь, что refresh токен не истек
-- Проверьте path для cookie `session` - он должен быть `/auth`
+- Проверьте path для cookie `session` — он должен быть `{prefix}/auth`
+- Хендлер refresh должен быть `POST /…/auth/refresh/*uri`
 
 ### Redis ошибки подключения
 

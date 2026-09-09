@@ -312,7 +312,7 @@ func TestRefresh(t *testing.T) {
 		h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
 
 		c := e.NewContext(req, rec)
-		c.SetPath("/auth/refresh/:uri")
+		c.SetPath("/auth/refresh/*uri")
 		c.SetParamNames("uri")
 		c.SetParamValues("api/v2")
 
