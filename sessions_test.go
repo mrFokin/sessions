@@ -133,6 +133,7 @@ func TestStart(t *testing.T) {
 				assert.Equal(t, tc.access.MaxAge, ac.MaxAge)
 				assert.Equal(t, tc.access.Secure, ac.Secure)
 				assert.Equal(t, tc.access.Path, ac.Path)
+				assert.Empty(t, ac.Domain)
 			}
 		}
 
@@ -141,6 +142,7 @@ func TestStart(t *testing.T) {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
 				assert.Equal(t, tc.refresh.Secure, rc.Secure)
 				assert.Equal(t, tc.refresh.Path, rc.Path)
+				assert.Empty(t, rc.Domain)
 			}
 		}
 	}

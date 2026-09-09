@@ -331,6 +331,7 @@ type Device struct {
 
 - **Назначение:** хранит refresh токен
 - **Path:** `{prefix}/auth` (по умолчанию `/auth`)
+- **Domain:** не задаётся (host-only)
 - **HttpOnly:** `true` (недоступен для JavaScript)
 - **Secure:** настраивается при инициализации
 - **SameSite:** `Lax`
@@ -340,6 +341,7 @@ type Device struct {
 
 - **Назначение:** хранит JWT access токен
 - **Path:** `{prefix}` или `/` если prefix пустой
+- **Domain:** не задаётся (host-only)
 - **HttpOnly:** `false` (доступен для JavaScript)
 - **Secure:** настраивается при инициализации
 - **SameSite:** `Lax`
@@ -520,7 +522,7 @@ go tool cover -html=coverage.out
 **Проблема:** После вызова `Start()` cookies не устанавливаются.
 
 **Решение:**
-- Проверьте, что домен в запросе соответствует домену cookie
+- Cookies host-only (без `Domain`) — браузер привязывает их к текущему хосту, без порта в атрибуте
 - Убедитесь, что `Secure` флаг соответствует протоколу (false для HTTP, true для HTTPS)
 
 ### Бесконечный редирект

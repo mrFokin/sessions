@@ -282,13 +282,14 @@ func (s *sessions) Refresh(c echo.Context) error {
     Value:    refreshToken,
     MaxAge:   int(s.RefreshTimeout.Seconds()),
     Expires:  time.Now().Add(s.RefreshTimeout),
-    Domain:   c.Request().Host,
     Path:     "/auth",          // Ограничен только /auth
     HttpOnly: true,             // Защита от XSS
     Secure:   s.Secure,         // Только HTTPS в production
     SameSite: http.SameSiteLaxMode, // Защита от CSRF
 }
 ```
+
+Domain не задаётся: cookie host-only. `Host` с портом в `Domain` браузеры отбрасывают.
 
 ### Защита от атак
 
