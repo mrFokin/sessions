@@ -49,6 +49,8 @@ func TestStart(t *testing.T) {
 			when:    "Session.Start вернул неизвестную ошибку",
 			current: "",
 			err:     errors.New("Unknown error"),
+			access:  &http.Cookie{MaxAge: -1, Secure: false, Path: "/"},
+			refresh: &http.Cookie{MaxAge: -1, Secure: false, Path: "/auth"},
 			initSS: func(m *mockSessionStore) {
 				m.On("Create", mock.Anything).Return(errors.New("Unknown error"))
 			},
@@ -87,6 +89,18 @@ func TestStart(t *testing.T) {
 			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/api/auth"},
 			initSS: func(m *mockSessionStore) {
 				m.On("Delete", "123456").Return(nil)
+				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
+		{
+			when:    "Префикс без ведущего слэша нормализуется",
+			current: "",
+			err:     nil,
+			secure:  true,
+			prefix:  "api/",
+			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/api"},
+			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/api/auth"},
+			initSS: func(m *mockSessionStore) {
 				m.On("Create", mock.Anything).Return(nil)
 			},
 		},
@@ -150,6 +164,31 @@ func TestStart(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestNormalizePrefix(t *testing.T) {
+	assert.Equal(t, "", normalizePrefix(""))
+	assert.Equal(t, "", normalizePrefix("/"))
+	assert.Equal(t, "/api", normalizePrefix("api"))
+	assert.Equal(t, "/api", normalizePrefix("api/"))
+	assert.Equal(t, "/api", normalizePrefix("/api/"))
+	assert.Equal(t, "/api", normalizePrefix(" /api/ "))
+}
+
+func TestStartUsesRealIP(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
+	req.Header.Set("X-Real-IP", "10.1.2.3")
+	rec := httptest.NewRecorder()
+
+	mSessionStore := &mockSessionStore{}
+	mSessionStore.On("Create", mock.MatchedBy(func(s Session) bool {
+		return s.Device.IP == "10.1.2.3"
+	})).Return(nil)
+
+	h := New("", []byte("secret"), time.Minute, time.Hour, false, mSessionStore)
+	c := echo.New().NewContext(req, rec)
+	assert.NoError(t, h.Start(c, jwt.MapClaims{"Name": "Jhon Doe"}))
+	mSessionStore.AssertExpectations(t)
 }
 
 func TestStop(t *testing.T) {
@@ -294,8 +333,6 @@ func TestRefresh(t *testing.T) {
 			when:    "Если текушая сессия не истекла, но SessionStore.Create вернул неизвестную ошибку",
 			current: "session=123456",
 			err:     errors.New("Unknown errror"),
-			access:  &http.Cookie{MaxAge: -1, Secure: true},
-			refresh: &http.Cookie{MaxAge: -1, Secure: true},
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",

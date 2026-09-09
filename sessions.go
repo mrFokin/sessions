@@ -44,13 +44,25 @@ type Session struct {
 
 func New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions {
 	return &sessions{
-		Prefix:         prefix,
+		Prefix:         normalizePrefix(prefix),
 		Secret:         secret,
 		AccessTimeout:  accessTimeout,
 		RefreshTimeout: refreshTimeout,
 		Secure:         secure,
 		Store:          store,
 	}
+}
+
+func normalizePrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || prefix == "/" {
+		return ""
+	}
+	prefix = strings.TrimRight(prefix, "/")
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	return prefix
 }
 
 type sessions struct {
@@ -70,12 +82,16 @@ func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
 		}
 	}
 
-	return s.start(c, claims)
+	if err := s.start(c, claims); err != nil {
+		s.clearCookies(c)
+		return err
+	}
+	return nil
 }
 
 func (s *sessions) Stop(c echo.Context) error {
 	current, err := c.Cookie("session")
-	if err != http.ErrNoCookie {
+	if err == nil && current != nil {
 		if err := s.Store.Delete(current.Value); err != nil {
 			c.Logger().Info("Sessions.Stop: Ошибка удаления сессии из SessionStore")
 		}
@@ -168,7 +184,7 @@ func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
 		Token:  uuid.NewString(),
 		Claims: claims,
 		Device: Device{
-			IP:        c.Request().RemoteAddr,
+			IP:        c.RealIP(),
 			UserAgent: c.Request().UserAgent(),
 		},
 		Created: time.Now(),
@@ -176,7 +192,6 @@ func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
 	}
 
 	if err := s.Store.Create(session); err != nil {
-		s.clearCookies(c)
 		return err
 	}
 

@@ -199,7 +199,7 @@ e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 Создает менеджер сессий.
 
 **Параметры:**
-- `prefix` - префикс пути для cookies (например, `/api` или `""` для корня)
+- `prefix` - префикс пути для cookies (например, `/api` или `""` для корня). Непустой prefix без `/` нормализуется (`api` → `/api`), хвостовой `/` срезается.
 - `secret` - секретный ключ для подписи JWT токенов
 - `accessTimeout` - время жизни access токена
 - `refreshTimeout` - время жизни refresh токена
@@ -321,7 +321,7 @@ type Session struct {
 
 ```go
 type Device struct {
-    IP        string  // IP адрес
+    IP        string  // IP клиента (Echo RealIP)
     UserAgent string  // User-Agent браузера
 }
 ```
