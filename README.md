@@ -106,6 +106,7 @@ redisStore := store.NewRedisStore(&redis.Options{
     Password: "",
     DB:       0,
 })
+defer redisStore.Close()
 
 sessionManager := sessions.New(
     "",
@@ -390,12 +391,15 @@ store := store.NewMemoryStore()
 
 **Использование:**
 ```go
-store := store.NewRedisStore(&redis.Options{
+redisStore := store.NewRedisStore(&redis.Options{
     Addr:     "localhost:6379",
     Password: "your-password",
     DB:       0,
 })
+defer redisStore.Close()
 ```
+
+`Create` с неположительным TTL (`Expired` в прошлом) возвращает ошибку, сессия не записывается.
 
 **Формат ключей в Redis:**
 ```
@@ -570,11 +574,12 @@ redis-cli -h localhost -p 6379
    Клиент go-redis автоматически управляет пулом соединений. Настройте размер пула для высоконагруженных приложений:
    
    ```go
-   store := store.NewRedisStore(&redis.Options{
+   redisStore := store.NewRedisStore(&redis.Options{
        Addr:         "localhost:6379",
        PoolSize:     100,
        MinIdleConns: 10,
    })
+   defer redisStore.Close()
    ```
 
 2. **Memory Store Ограничения:**

@@ -10,6 +10,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const redisOpTimeout = 3 * time.Second
+
+var ErrNonPositiveTTL = errors.New("session ttl must be positive")
+
 type redisStore struct {
 	client *redis.Client
 }
@@ -20,8 +24,21 @@ func NewRedisStore(opt *redis.Options) *redisStore {
 	}
 }
 
+func (s *redisStore) Close() error {
+	return s.client.Close()
+}
+
+func (s *redisStore) ctx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), redisOpTimeout)
+}
+
+func sessionKey(token string) string {
+	return "session:" + token
+}
+
 func (s *redisStore) Create(session sessions.Session) error {
-	ctx := context.Background()
+	ctx, cancel := s.ctx()
+	defer cancel()
 
 	data, err := json.Marshal(session)
 	if err != nil {
@@ -30,17 +47,17 @@ func (s *redisStore) Create(session sessions.Session) error {
 
 	ttl := time.Until(session.Expired)
 	if ttl <= 0 {
-		return nil
+		return ErrNonPositiveTTL
 	}
 
-	// Use the refresh token (session.Token) as the key
-	return s.client.Set(ctx, "session:"+session.Token, data, ttl).Err()
+	return s.client.Set(ctx, sessionKey(session.Token), data, ttl).Err()
 }
 
 func (s *redisStore) Read(refreshToken string) (session sessions.Session, err error) {
-	ctx := context.Background()
+	ctx, cancel := s.ctx()
+	defer cancel()
 
-	data, err := s.client.Get(ctx, "session:"+refreshToken).Bytes()
+	data, err := s.client.Get(ctx, sessionKey(refreshToken)).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			err = sessions.ErrSessionNotFound
@@ -57,6 +74,7 @@ func (s *redisStore) Read(refreshToken string) (session sessions.Session, err er
 }
 
 func (s *redisStore) Delete(refreshToken string) error {
-	ctx := context.Background()
-	return s.client.Del(ctx, "session:"+refreshToken).Err()
+	ctx, cancel := s.ctx()
+	defer cancel()
+	return s.client.Del(ctx, sessionKey(refreshToken)).Err()
 }
