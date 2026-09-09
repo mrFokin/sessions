@@ -106,7 +106,7 @@ func JWTWithRedirect(path string, secret []byte, claims jwt.Claims) echo.Middlew
 **Особенности:**
 - Использует `echo-jwt` библиотеку
 - Кастомный error handler для редиректов
-- Поддержка пользовательских claims структур
+- Поддержка пользовательских claims структур (новый экземпляр на запрос)
 
 ## Паттерны проектирования
 
@@ -123,7 +123,7 @@ if isProduction {
     store = NewMemoryStore()
 }
 
-sessionManager := sessions.New(secret, accessTimeout, refreshTimeout, secure, store)
+sessionManager := sessions.New("", secret, accessTimeout, refreshTimeout, secure, store)
 ```
 
 **Преимущества:**
@@ -136,7 +136,7 @@ sessionManager := sessions.New(secret, accessTimeout, refreshTimeout, secure, st
 Инициализация через функцию `New`:
 
 ```go
-func New(secret []byte, accessTimeout time.Duration, 
+func New(prefix string, secret []byte, accessTimeout time.Duration, 
          refreshTimeout time.Duration, secure bool, 
          store SessionStore) Sessions
 ```
@@ -245,11 +245,11 @@ func (s *sessions) Refresh(c echo.Context) error {
 4. Загрузка Session из Store
    ↓
 5. Проверка срока действия
-   ├─ Expired → Clear cookies + 401
+   ├─ Expired → Delete + Clear cookies + 401
    └─ Valid ↓
-6. Удаление старой сессии из Store
+6. Создание новой сессии (s.start())
    ↓
-7. Создание новой сессии (s.start())
+7. Удаление старой сессии из Store
    ↓
 8. Redirect 307 → /api/profile
    ↓

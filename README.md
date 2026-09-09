@@ -48,6 +48,7 @@ func main() {
     
     // Инициализируем менеджер сессий
     sessionManager := sessions.New(
+        "",                          // prefix
         []byte("your-secret-key"),  // секретный ключ для JWT
         15*time.Minute,              // время жизни access токена
         24*time.Hour,                // время жизни refresh токена
@@ -107,6 +108,7 @@ redisStore := store.NewRedisStore(&redis.Options{
 })
 
 sessionManager := sessions.New(
+    "",
     []byte("your-secret-key"),
     15*time.Minute,
     24*time.Hour,
@@ -178,10 +180,10 @@ err := sessionManager.Stop(c)
 
 **Поведение:**
 - Проверяет наличие refresh токена в cookie `session`
-- Загружает сессию из хранилища
+- Загружает сессию из хранилища; `ErrSessionNotFound` → 401
 - Нормализует `*uri` в same-origin path; иначе 400 без ротации сессии
 - Проверяет срок действия refresh токена
-- Создает новую сессию с теми же claims
+- Создает новую сессию с копией claims, затем удаляет старую
 - Делает редирект 307 на нормализованный path
 
 **Маршрут:**
@@ -264,7 +266,7 @@ Middleware для защиты роутов с автоматическим ре
 **Параметры:**
 - `path` - полный путь для редиректа (включая префикс, если нужен)
 - `secret` - секретный ключ для верификации JWT
-- `claims` - структура claims для парсинга JWT
+- `claims` - образец типа claims; на каждый запрос создаётся новый экземпляр
 
 **Поведение:**
 - Проверяет access токен из cookie
@@ -406,7 +408,7 @@ session:{refresh-token-uuid}
 
 1. **Использование HTTPS:**
    ```go
-   sessions.New(secret, accessTimeout, refreshTimeout, true, store)
+   sessions.New("", secret, accessTimeout, refreshTimeout, true, store)
    ```
    Установите `secure` в `true` для production окружения.
 

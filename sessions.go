@@ -93,6 +93,9 @@ func (s *sessions) Refresh(c echo.Context) error {
 
 	current, err := s.Store.Read(cookie.Value)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return echo.ErrUnauthorized
+		}
 		return err
 	}
 
@@ -101,11 +104,10 @@ func (s *sessions) Refresh(c echo.Context) error {
 		return err
 	}
 
-	if err := s.Store.Delete(current.Token); err != nil {
-		c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
-	}
-
 	if time.Now().After(current.Expired) {
+		if err := s.Store.Delete(current.Token); err != nil {
+			c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
+		}
 		s.clearCookies(c)
 		return echo.ErrUnauthorized
 	}
@@ -115,6 +117,10 @@ func (s *sessions) Refresh(c echo.Context) error {
 	err = s.start(c, current.Claims)
 	if err != nil {
 		return err
+	}
+
+	if err := s.Store.Delete(current.Token); err != nil {
+		c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
 	}
 
 	return c.Redirect(http.StatusTemporaryRedirect, uri)
@@ -141,7 +147,16 @@ func redirectPath(param string) (string, error) {
 	return p, nil
 }
 
+func copyClaims(claims jwt.MapClaims) jwt.MapClaims {
+	out := make(jwt.MapClaims, len(claims))
+	for k, v := range claims {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
+	claims = copyClaims(claims)
 	claims["exp"] = time.Now().Add(s.AccessTimeout).Unix()
 
 	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.Secret)

@@ -116,6 +116,10 @@ func TestStart(t *testing.T) {
 		mSessionStore.AssertExpectations(t)
 
 		assert.Equal(t, tc.err, err, "Некорректная ошибка обработчика")
+		if err == nil {
+			_, ok := claims["exp"]
+			assert.False(t, ok, "Start не должен менять исходные claims")
+		}
 
 		var ac *http.Cookie
 		var rc *http.Cookie
@@ -267,7 +271,7 @@ func TestRefresh(t *testing.T) {
 			current: "session=123456",
 			err:     echo.ErrUnauthorized,
 			initSS: func(m *mockSessionStore) {
-				m.On("Read", "123456").Return(Session{}, echo.ErrUnauthorized)
+				m.On("Read", "123456").Return(Session{}, ErrSessionNotFound)
 			},
 		},
 		{
@@ -299,7 +303,6 @@ func TestRefresh(t *testing.T) {
 					Expired: time.Now().Add(time.Hour),
 				}
 				m.On("Read", "123456").Return(s, nil)
-				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(errors.New("Unknown errror"))
 			},
 		},
