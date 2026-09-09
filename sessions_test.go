@@ -49,6 +49,8 @@ func TestStart(t *testing.T) {
 			when:    "Session.Start вернул неизвестную ошибку",
 			current: "",
 			err:     errors.New("Unknown error"),
+			access:  &http.Cookie{MaxAge: -1, Secure: false, Path: "/"},
+			refresh: &http.Cookie{MaxAge: -1, Secure: false, Path: "/auth"},
 			initSS: func(m *mockSessionStore) {
 				m.On("Create", mock.Anything).Return(errors.New("Unknown error"))
 			},
@@ -90,6 +92,18 @@ func TestStart(t *testing.T) {
 				m.On("Create", mock.Anything).Return(nil)
 			},
 		},
+		{
+			when:    "Префикс без ведущего слэша нормализуется",
+			current: "",
+			err:     nil,
+			secure:  true,
+			prefix:  "api/",
+			access:  &http.Cookie{MaxAge: 300, Secure: true, Path: "/api"},
+			refresh: &http.Cookie{MaxAge: 600, Secure: true, Path: "/api/auth"},
+			initSS: func(m *mockSessionStore) {
+				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
 	}
 
 	e := echo.New()
@@ -116,6 +130,10 @@ func TestStart(t *testing.T) {
 		mSessionStore.AssertExpectations(t)
 
 		assert.Equal(t, tc.err, err, "Некорректная ошибка обработчика")
+		if err == nil {
+			_, ok := claims["exp"]
+			assert.False(t, ok, "Start не должен менять исходные claims")
+		}
 
 		var ac *http.Cookie
 		var rc *http.Cookie
@@ -133,6 +151,7 @@ func TestStart(t *testing.T) {
 				assert.Equal(t, tc.access.MaxAge, ac.MaxAge)
 				assert.Equal(t, tc.access.Secure, ac.Secure)
 				assert.Equal(t, tc.access.Path, ac.Path)
+				assert.Empty(t, ac.Domain)
 			}
 		}
 
@@ -141,9 +160,35 @@ func TestStart(t *testing.T) {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
 				assert.Equal(t, tc.refresh.Secure, rc.Secure)
 				assert.Equal(t, tc.refresh.Path, rc.Path)
+				assert.Empty(t, rc.Domain)
 			}
 		}
 	}
+}
+
+func TestNormalizePrefix(t *testing.T) {
+	assert.Equal(t, "", normalizePrefix(""))
+	assert.Equal(t, "", normalizePrefix("/"))
+	assert.Equal(t, "/api", normalizePrefix("api"))
+	assert.Equal(t, "/api", normalizePrefix("api/"))
+	assert.Equal(t, "/api", normalizePrefix("/api/"))
+	assert.Equal(t, "/api", normalizePrefix(" /api/ "))
+}
+
+func TestStartUsesRealIP(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
+	req.Header.Set("X-Real-IP", "10.1.2.3")
+	rec := httptest.NewRecorder()
+
+	mSessionStore := &mockSessionStore{}
+	mSessionStore.On("Create", mock.MatchedBy(func(s Session) bool {
+		return s.Device.IP == "10.1.2.3"
+	})).Return(nil)
+
+	h := New("", []byte("secret"), time.Minute, time.Hour, false, mSessionStore)
+	c := echo.New().NewContext(req, rec)
+	assert.NoError(t, h.Start(c, jwt.MapClaims{"Name": "Jhon Doe"}))
+	mSessionStore.AssertExpectations(t)
 }
 
 func TestStop(t *testing.T) {
@@ -219,14 +264,39 @@ func TestStop(t *testing.T) {
 	}
 }
 
+func TestRedirectPath(t *testing.T) {
+	testCases := []struct {
+		param string
+		want  string
+		err   error
+	}{
+		{param: "rpc", want: "/rpc"},
+		{param: "api/v2", want: "/api/v2"},
+		{param: "", want: "/"},
+		{param: "../x", want: "/x"},
+		{param: "/rpc", err: echo.ErrBadRequest},
+		{param: "/evil.com", err: echo.ErrBadRequest},
+		{param: `\evil.com`, err: echo.ErrBadRequest},
+		{param: "//evil.com", want: "/evil.com"},
+		{param: "%2F%2Fevil.com", want: "/evil.com"},
+	}
+
+	for _, tc := range testCases {
+		got, err := redirectPath(tc.param)
+		assert.Equal(t, tc.err, err, "param=%q", tc.param)
+		assert.Equal(t, tc.want, got, "param=%q", tc.param)
+	}
+}
+
 func TestRefresh(t *testing.T) {
 	testCases := []struct {
 		when     string
 		current  string
+		uri      string
 		err      error
 		access   *http.Cookie
 		refresh  *http.Cookie
-		redirect bool
+		redirect string
 		initSS   initSessionStoreMock
 	}{
 		{
@@ -240,7 +310,7 @@ func TestRefresh(t *testing.T) {
 			current: "session=123456",
 			err:     echo.ErrUnauthorized,
 			initSS: func(m *mockSessionStore) {
-				m.On("Read", "123456").Return(Session{}, echo.ErrUnauthorized)
+				m.On("Read", "123456").Return(Session{}, ErrSessionNotFound)
 			},
 		},
 		{
@@ -263,8 +333,6 @@ func TestRefresh(t *testing.T) {
 			when:    "Если текушая сессия не истекла, но SessionStore.Create вернул неизвестную ошибку",
 			current: "session=123456",
 			err:     errors.New("Unknown errror"),
-			access:  &http.Cookie{MaxAge: -1, Secure: true},
-			refresh: &http.Cookie{MaxAge: -1, Secure: true},
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",
@@ -272,17 +340,17 @@ func TestRefresh(t *testing.T) {
 					Expired: time.Now().Add(time.Hour),
 				}
 				m.On("Read", "123456").Return(s, nil)
-				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(errors.New("Unknown errror"))
 			},
 		},
 		{
 			when:     "Если все корректно",
 			current:  "session=123456",
+			uri:      "api/v2",
 			err:      nil,
 			access:   &http.Cookie{MaxAge: 300, Secure: true},
 			refresh:  &http.Cookie{MaxAge: 600, Secure: true},
-			redirect: true,
+			redirect: "/api/v2",
 			initSS: func(m *mockSessionStore) {
 				s := Session{
 					Token:   "123456",
@@ -292,6 +360,20 @@ func TestRefresh(t *testing.T) {
 				m.On("Read", "123456").Return(s, nil)
 				m.On("Delete", "123456").Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
+		{
+			when:    "Open redirect через //host",
+			current: "session=123456",
+			uri:     "/evil.com",
+			err:     echo.ErrBadRequest,
+			initSS: func(m *mockSessionStore) {
+				s := Session{
+					Token:   "123456",
+					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
+					Expired: time.Now().Add(time.Hour),
+				}
+				m.On("Read", "123456").Return(s, nil)
 			},
 		},
 	}
@@ -312,9 +394,9 @@ func TestRefresh(t *testing.T) {
 		h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, mSessionStore)
 
 		c := e.NewContext(req, rec)
-		c.SetPath("/auth/refresh/:uri")
+		c.SetPath("/auth/refresh/*uri")
 		c.SetParamNames("uri")
-		c.SetParamValues("api/v2")
+		c.SetParamValues(tc.uri)
 
 		err := h.Refresh(c)
 
@@ -347,9 +429,9 @@ func TestRefresh(t *testing.T) {
 			}
 		}
 
-		if tc.redirect {
+		if tc.redirect != "" {
 			assert.Equal(t, http.StatusTemporaryRedirect, rec.Code, "Некорректный http-статус ответа")
-			assert.Equal(t, "/api/v2", rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
+			assert.Equal(t, tc.redirect, rec.Header().Get(echo.HeaderLocation), "Некорректный путь редиректа")
 		}
 	}
 }

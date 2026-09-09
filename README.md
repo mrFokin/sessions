@@ -48,6 +48,7 @@ func main() {
     
     // Инициализируем менеджер сессий
     sessionManager := sessions.New(
+        "",                          // prefix
         []byte("your-secret-key"),  // секретный ключ для JWT
         15*time.Minute,              // время жизни access токена
         24*time.Hour,                // время жизни refresh токена
@@ -71,7 +72,7 @@ func main() {
     })
     
     // Роут для обновления сессии
-    e.GET("/auth/refresh/:uri", sessionManager.Refresh)
+    e.POST("/auth/refresh/*uri", sessionManager.Refresh)
     
     // Роут для выхода
     e.POST("/auth/logout", func(c echo.Context) error {
@@ -105,8 +106,10 @@ redisStore := store.NewRedisStore(&redis.Options{
     Password: "",
     DB:       0,
 })
+defer redisStore.Close()
 
 sessionManager := sessions.New(
+    "",
     []byte("your-secret-key"),
     15*time.Minute,
     24*time.Hour,
@@ -114,6 +117,16 @@ sessionManager := sessions.New(
     redisStore,
 )
 ```
+
+## Ограничения
+
+Библиотека рассчитана на JSON-RPC по HTTP с cookies, а не на REST с query/fragment.
+
+- Метод RPC в теле запроса. URL — endpoint. После refresh в `Location` попадает только same-origin path из `*uri` (`url.Parse`, без host и `//`). Иначе 400, сессия не ротируется. Query, fragment и trailing slash не восстанавливаются.
+- `JWTWithRedirect` отвечает **307**. Клиент должен следовать редиректу, сохранить метод и тело, слать cookies (`credentials`). Транспорт без cookie jar или без follow redirect автоматический refresh не получит.
+- Хендлер refresh вешается как **POST** `/…/auth/refresh/*uri`. 307 с JSON-RPC POST иначе получит 405 на GET-роуте.
+- Cookie `session` имеет Path `{prefix}/auth`, поэтому URL refresh должен быть под этим путём — иначе refresh-токен не уйдёт.
+- TTL cookie `access` совпадает с `exp` JWT: браузер не шлёт протухший access. Триггер refresh — отсутствие cookie (`ErrJWTMissing`), не разбор истёкшего JWT.
 
 ## API документация
 
@@ -164,18 +177,19 @@ err := sessionManager.Stop(c)
 Обновляет истекший access токен используя refresh токен.
 
 **Параметры:**
-- Ожидает параметр пути `:uri` - URL для редиректа после обновления
+- Ожидает параметр пути `*uri` — path для редиректа после обновления (хвост исходного URL)
 
 **Поведение:**
 - Проверяет наличие refresh токена в cookie `session`
-- Загружает сессию из хранилища
+- Загружает сессию из хранилища; `ErrSessionNotFound` → 401
+- Нормализует `*uri` в same-origin path; иначе 400 без ротации сессии
 - Проверяет срок действия refresh токена
-- Создает новую сессию с теми же claims
-- Делает редирект на исходный URL
+- Создает новую сессию с копией claims, затем удаляет старую
+- Делает редирект 307 на нормализованный path
 
 **Маршрут:**
 ```go
-e.GET("/auth/refresh/:uri", sessionManager.Refresh)
+e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 ```
 
 ### Конструкторы
@@ -185,7 +199,7 @@ e.GET("/auth/refresh/:uri", sessionManager.Refresh)
 Создает менеджер сессий.
 
 **Параметры:**
-- `prefix` - префикс пути для cookies (например, `/api` или `""` для корня)
+- `prefix` - префикс пути для cookies (например, `/api` или `""` для корня). Непустой prefix без `/` нормализуется (`api` → `/api`), хвостовой `/` срезается.
 - `secret` - секретный ключ для подписи JWT токенов
 - `accessTimeout` - время жизни access токена
 - `refreshTimeout` - время жизни refresh токена
@@ -253,7 +267,7 @@ Middleware для защиты роутов с автоматическим ре
 **Параметры:**
 - `path` - полный путь для редиректа (включая префикс, если нужен)
 - `secret` - секретный ключ для верификации JWT
-- `claims` - структура claims для парсинга JWT
+- `claims` - образец типа claims; на каждый запрос создаётся новый экземпляр
 
 **Поведение:**
 - Проверяет access токен из cookie
@@ -307,7 +321,7 @@ type Session struct {
 
 ```go
 type Device struct {
-    IP        string  // IP адрес
+    IP        string  // IP клиента (Echo RealIP)
     UserAgent string  // User-Agent браузера
 }
 ```
@@ -320,6 +334,7 @@ type Device struct {
 
 - **Назначение:** хранит refresh токен
 - **Path:** `{prefix}/auth` (по умолчанию `/auth`)
+- **Domain:** не задаётся (host-only)
 - **HttpOnly:** `true` (недоступен для JavaScript)
 - **Secure:** настраивается при инициализации
 - **SameSite:** `Lax`
@@ -329,6 +344,7 @@ type Device struct {
 
 - **Назначение:** хранит JWT access токен
 - **Path:** `{prefix}` или `/` если prefix пустой
+- **Domain:** не задаётся (host-only)
 - **HttpOnly:** `false` (доступен для JavaScript)
 - **Secure:** настраивается при инициализации
 - **SameSite:** `Lax`
@@ -375,12 +391,15 @@ store := store.NewMemoryStore()
 
 **Использование:**
 ```go
-store := store.NewRedisStore(&redis.Options{
+redisStore := store.NewRedisStore(&redis.Options{
     Addr:     "localhost:6379",
     Password: "your-password",
     DB:       0,
 })
+defer redisStore.Close()
 ```
+
+`Create` с неположительным TTL (`Expired` в прошлом) возвращает ошибку, сессия не записывается.
 
 **Формат ключей в Redis:**
 ```
@@ -393,7 +412,7 @@ session:{refresh-token-uuid}
 
 1. **Использование HTTPS:**
    ```go
-   sessions.New(secret, accessTimeout, refreshTimeout, true, store)
+   sessions.New("", secret, accessTimeout, refreshTimeout, true, store)
    ```
    Установите `secure` в `true` для production окружения.
 
@@ -509,17 +528,18 @@ go tool cover -html=coverage.out
 **Проблема:** После вызова `Start()` cookies не устанавливаются.
 
 **Решение:**
-- Проверьте, что домен в запросе соответствует домену cookie
+- Cookies host-only (без `Domain`) — браузер привязывает их к текущему хосту, без порта в атрибуте
 - Убедитесь, что `Secure` флаг соответствует протоколу (false для HTTP, true для HTTPS)
 
 ### Бесконечный редирект
 
-**Проблема:** Страница постоянно редиректится на `/auth/refresh`.
+**Проблема:** Запрос постоянно редиректится на `/auth/refresh`.
 
 **Решение:**
 - Проверьте, что refresh токен существует в хранилище
 - Убедитесь, что refresh токен не истек
-- Проверьте path для cookie `session` - он должен быть `/auth`
+- Проверьте path для cookie `session` — он должен быть `{prefix}/auth`
+- Хендлер refresh должен быть `POST /…/auth/refresh/*uri`
 
 ### Redis ошибки подключения
 
@@ -554,11 +574,12 @@ redis-cli -h localhost -p 6379
    Клиент go-redis автоматически управляет пулом соединений. Настройте размер пула для высоконагруженных приложений:
    
    ```go
-   store := store.NewRedisStore(&redis.Options{
+   redisStore := store.NewRedisStore(&redis.Options{
        Addr:         "localhost:6379",
        PoolSize:     100,
        MinIdleConns: 10,
    })
+   defer redisStore.Close()
    ```
 
 2. **Memory Store Ограничения:**

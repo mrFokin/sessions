@@ -106,7 +106,7 @@ func JWTWithRedirect(path string, secret []byte, claims jwt.Claims) echo.Middlew
 **Особенности:**
 - Использует `echo-jwt` библиотеку
 - Кастомный error handler для редиректов
-- Поддержка пользовательских claims структур
+- Поддержка пользовательских claims структур (новый экземпляр на запрос)
 
 ## Паттерны проектирования
 
@@ -123,7 +123,7 @@ if isProduction {
     store = NewMemoryStore()
 }
 
-sessionManager := sessions.New(secret, accessTimeout, refreshTimeout, secure, store)
+sessionManager := sessions.New("", secret, accessTimeout, refreshTimeout, secure, store)
 ```
 
 **Преимущества:**
@@ -136,7 +136,7 @@ sessionManager := sessions.New(secret, accessTimeout, refreshTimeout, secure, st
 Инициализация через функцию `New`:
 
 ```go
-func New(secret []byte, accessTimeout time.Duration, 
+func New(prefix string, secret []byte, accessTimeout time.Duration, 
          refreshTimeout time.Duration, secure bool, 
          store SessionStore) Sessions
 ```
@@ -235,7 +235,7 @@ func (s *sessions) Refresh(c echo.Context) error {
 ### Обновление токена (Refresh)
 
 ```
-1. GET /auth/refresh/api/profile
+1. POST /auth/refresh/api/profile
    Cookie: session=refresh_token
    ↓
 2. sessionManager.Refresh(c)
@@ -245,15 +245,15 @@ func (s *sessions) Refresh(c echo.Context) error {
 4. Загрузка Session из Store
    ↓
 5. Проверка срока действия
-   ├─ Expired → Clear cookies + 401
+   ├─ Expired → Delete + Clear cookies + 401
    └─ Valid ↓
-6. Удаление старой сессии из Store
+6. Создание новой сессии (s.start())
    ↓
-7. Создание новой сессии (s.start())
+7. Удаление старой сессии из Store
    ↓
 8. Redirect 307 → /api/profile
    ↓
-9. Браузер автоматически повторяет запрос с новым access токеном
+9. Клиент повторяет исходный POST с новым access токеном
 ```
 
 ## Безопасность
@@ -282,13 +282,14 @@ func (s *sessions) Refresh(c echo.Context) error {
     Value:    refreshToken,
     MaxAge:   int(s.RefreshTimeout.Seconds()),
     Expires:  time.Now().Add(s.RefreshTimeout),
-    Domain:   c.Request().Host,
     Path:     "/auth",          // Ограничен только /auth
     HttpOnly: true,             // Защита от XSS
     Secure:   s.Secure,         // Только HTTPS в production
     SameSite: http.SameSiteLaxMode, // Защита от CSRF
 }
 ```
+
+Domain не задаётся: cookie host-only. `Host` с портом в `Domain` браузеры отбрасывают.
 
 ### Защита от атак
 
@@ -356,15 +357,14 @@ redisStore := store.NewRedisStore(&redis.Options{
 
 ### 2. Redirect vs JSON Error
 
-**Решение:** Redirect для истекших токенов
+**Решение:** Redirect 307, когда cookie `access` нет
 **Причины:**
-- Прозрачное обновление для пользователя
-- Работает с обычными HTML формами
-- Упрощение фронтенд логики
+- Клиент с cookies и follow redirect обновляет сессию прозрачно
+- 307 сохраняет исходный POST JSON-RPC (метод и тело)
 
 **Компромисс:**
 - Дополнительный HTTP запрос
-- Не подходит для чисто API приложений
+- Редирект рассчитан на cookie-клиент, который ходит за 307; транспорт без cookie jar / без follow redirect автоматический refresh не получит
 
 ### 3. MapClaims vs Typed Claims
 

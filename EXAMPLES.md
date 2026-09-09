@@ -61,7 +61,7 @@ func main() {
     // Публичные роуты
     e.POST("/auth/login", login)
     e.POST("/auth/logout", logout)
-    e.GET("/auth/refresh/*", sessionManager.Refresh)
+    e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 
     // Защищенные роуты
     api := e.Group("/api")
@@ -190,7 +190,7 @@ func main() {
     api := e.Group("/api")
     api.POST("/auth/login", login)
     api.POST("/auth/logout", logout)
-    api.GET("/auth/refresh/*", sessionManager.Refresh)
+    api.POST("/auth/refresh/*uri", sessionManager.Refresh)
 
     // Защищенные роуты с префиксом
     protected := api.Group("")
@@ -290,7 +290,7 @@ func getUsers(c echo.Context) error {
    - Все маршруты должны начинаться с префикса `/api`
    - Login: `POST /api/auth/login`
    - Logout: `POST /api/auth/logout`
-   - Refresh: `GET /api/auth/refresh/*`
+   - Refresh: `POST /api/auth/refresh/*uri`
    - Protected: `GET /api/profile`, `GET /api/dashboard`, etc.
 
 4. **Middleware:**

@@ -83,6 +83,43 @@ func TestJWTWithRedirect(t *testing.T) {
 	}
 }
 
+func TestCloneClaims(t *testing.T) {
+	srcMap := jwt.MapClaims{"Name": "shared"}
+	a := cloneClaims(srcMap).(jwt.MapClaims)
+	b := cloneClaims(srcMap).(jwt.MapClaims)
+	a["Name"] = "A"
+	assert.Empty(t, b["Name"])
+	assert.Equal(t, "A", a["Name"])
+
+	srcPtr := &mockClaims{Name: "shared"}
+	p1 := cloneClaims(srcPtr).(*mockClaims)
+	p2 := cloneClaims(srcPtr).(*mockClaims)
+	assert.NotSame(t, p1, p2)
+	assert.Empty(t, p1.Name)
+	assert.Empty(t, p2.Name)
+
+	p1.Name = "one"
+	assert.Empty(t, p2.Name)
+}
+
+func TestJWTWithRedirectTypedClaims(t *testing.T) {
+	h := JWTWithRedirect("/auth/refresh", []byte("secret"), &mockClaims{})(func(c echo.Context) error {
+		return c.String(http.StatusOK, "test")
+	})
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v2", nil)
+	req.Header.Set(echo.HeaderCookie, "access=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJOYW1lIjoiSmhvbiBEb2UifQ.hsShW3pRWuxeYtxaXf-igfnhexKQzoJqEl5zFjKyWl4")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h(c)
+	assert.NoError(t, err)
+
+	u := c.Get("user").(*jwt.Token).Claims.(*mockClaims)
+	assert.Equal(t, "Jhon Doe", u.Name)
+}
+
 func TestToken(t *testing.T) {
 	claims := jwt.MapClaims{"Name": "Jhon Doe"}
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("secret"))

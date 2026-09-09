@@ -3,6 +3,9 @@ package sessions
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -41,13 +44,25 @@ type Session struct {
 
 func New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions {
 	return &sessions{
-		Prefix:         prefix,
+		Prefix:         normalizePrefix(prefix),
 		Secret:         secret,
 		AccessTimeout:  accessTimeout,
 		RefreshTimeout: refreshTimeout,
 		Secure:         secure,
 		Store:          store,
 	}
+}
+
+func normalizePrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || prefix == "/" {
+		return ""
+	}
+	prefix = strings.TrimRight(prefix, "/")
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	return prefix
 }
 
 type sessions struct {
@@ -67,12 +82,16 @@ func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
 		}
 	}
 
-	return s.start(c, claims)
+	if err := s.start(c, claims); err != nil {
+		s.clearCookies(c)
+		return err
+	}
+	return nil
 }
 
 func (s *sessions) Stop(c echo.Context) error {
 	current, err := c.Cookie("session")
-	if err != http.ErrNoCookie {
+	if err == nil && current != nil {
 		if err := s.Store.Delete(current.Value); err != nil {
 			c.Logger().Info("Sessions.Stop: Ошибка удаления сессии из SessionStore")
 		}
@@ -90,14 +109,21 @@ func (s *sessions) Refresh(c echo.Context) error {
 
 	current, err := s.Store.Read(cookie.Value)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return echo.ErrUnauthorized
+		}
 		return err
 	}
 
-	if err := s.Store.Delete(current.Token); err != nil {
-		c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
+	uri, err := redirectPath(c.Param("uri"))
+	if err != nil {
+		return err
 	}
 
 	if time.Now().After(current.Expired) {
+		if err := s.Store.Delete(current.Token); err != nil {
+			c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
+		}
 		s.clearCookies(c)
 		return echo.ErrUnauthorized
 	}
@@ -109,11 +135,44 @@ func (s *sessions) Refresh(c echo.Context) error {
 		return err
 	}
 
-	uri := "/" + c.Param("uri")
+	if err := s.Store.Delete(current.Token); err != nil {
+		c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
+	}
+
 	return c.Redirect(http.StatusTemporaryRedirect, uri)
 }
 
+func redirectPath(param string) (string, error) {
+	if strings.ContainsAny(param, "\\") {
+		return "", echo.ErrBadRequest
+	}
+
+	u, err := url.Parse("/" + param)
+	if err != nil {
+		return "", echo.ErrBadRequest
+	}
+	if u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil {
+		return "", echo.ErrBadRequest
+	}
+
+	p := path.Clean(u.Path)
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return "", echo.ErrBadRequest
+	}
+
+	return p, nil
+}
+
+func copyClaims(claims jwt.MapClaims) jwt.MapClaims {
+	out := make(jwt.MapClaims, len(claims))
+	for k, v := range claims {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
+	claims = copyClaims(claims)
 	claims["exp"] = time.Now().Add(s.AccessTimeout).Unix()
 
 	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.Secret)
@@ -125,7 +184,7 @@ func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
 		Token:  uuid.NewString(),
 		Claims: claims,
 		Device: Device{
-			IP:        c.Request().RemoteAddr,
+			IP:        c.RealIP(),
 			UserAgent: c.Request().UserAgent(),
 		},
 		Created: time.Now(),
@@ -133,7 +192,6 @@ func (s *sessions) start(c echo.Context, claims jwt.MapClaims) error {
 	}
 
 	if err := s.Store.Create(session); err != nil {
-		s.clearCookies(c)
 		return err
 	}
 
@@ -153,7 +211,6 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 		Value:    refreshToken,
 		MaxAge:   int(s.RefreshTimeout.Seconds()),
 		Expires:  time.Now().Add(s.RefreshTimeout),
-		Domain:   c.Request().Host,
 		Path:     sessionPath,
 		HttpOnly: true,
 		Secure:   s.Secure,
@@ -165,7 +222,6 @@ func (s *sessions) setCookies(c echo.Context, accessToken string, refreshToken s
 		Value:    accessToken,
 		MaxAge:   int(s.AccessTimeout.Seconds()),
 		Expires:  time.Now().Add(s.AccessTimeout),
-		Domain:   c.Request().Host,
 		Path:     accessPath,
 		HttpOnly: false,
 		Secure:   s.Secure,
@@ -185,7 +241,6 @@ func (s *sessions) clearCookies(c echo.Context) {
 		Value:    "",
 		MaxAge:   -1,
 		Expires:  time.Now(),
-		Domain:   c.Request().Host,
 		Path:     sessionPath,
 		HttpOnly: true,
 		Secure:   s.Secure,
@@ -197,7 +252,6 @@ func (s *sessions) clearCookies(c echo.Context) {
 		Value:    "",
 		MaxAge:   -1,
 		Expires:  time.Now(),
-		Domain:   c.Request().Host,
 		Path:     accessPath,
 		HttpOnly: false,
 		Secure:   s.Secure,
