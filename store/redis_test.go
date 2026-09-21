@@ -169,3 +169,84 @@ func TestRedisStore_PrefixesIsolateStores(t *testing.T) {
 	_, err = a.Read(session.Token)
 	assert.NoError(t, err)
 }
+
+func sessionFor(token, sub string, created time.Time) sessions.Session[jwt.MapClaims] {
+	s := testSession(token, time.Hour)
+	s.Claims["sub"] = sub
+	s.Created = created
+	return s
+}
+
+func TestRedisStore_RevokeUser(t *testing.T) {
+	s, mr := newTestRedis(t)
+	now := time.Now()
+
+	old := sessionFor("old", "42", now.Add(-time.Minute))
+	other := sessionFor("other", "7", now.Add(-time.Minute))
+	noSub := testSession("no-sub", time.Hour)
+	for _, sess := range []sessions.Session[jwt.MapClaims]{old, other, noSub} {
+		require.NoError(t, s.Create(sess))
+	}
+
+	require.NoError(t, s.RevokeUser("42", time.Hour))
+	assert.True(t, mr.Exists("revoked:42"))
+	assert.Equal(t, time.Hour, mr.TTL("revoked:42"))
+
+	_, err := s.Read(old.Token)
+	assert.ErrorIs(t, err, sessions.ErrSessionNotFound, "session created before the revocation must be gone")
+
+	_, err = s.Read(other.Token)
+	assert.NoError(t, err, "another subject is unaffected")
+	_, err = s.Read(noSub.Token)
+	assert.NoError(t, err, "a session without a subject is unaffected")
+
+	// A session started after the revocation (e.g. login with the new password) works.
+	fresh := sessionFor("fresh", "42", time.Now().Add(time.Minute))
+	require.NoError(t, s.Create(fresh))
+	_, err = s.Read(fresh.Token)
+	assert.NoError(t, err)
+}
+
+func TestRedisStore_RevokeUserValidatesArguments(t *testing.T) {
+	s, _ := newTestRedis(t)
+
+	assert.ErrorIs(t, s.RevokeUser("", time.Hour), ErrEmptySubject)
+	assert.ErrorIs(t, s.RevokeUser("42", 0), ErrNonPositiveTTL)
+}
+
+func TestRedisStore_RevokeUserUsesKeyPrefix(t *testing.T) {
+	mr := miniredis.RunT(t)
+	a := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()}, WithKeyPrefix("a:"))
+	b := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()}, WithKeyPrefix("b:"))
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+
+	sessA := sessionFor("tok-a", "42", time.Now().Add(-time.Minute))
+	sessB := sessionFor("tok-b", "42", time.Now().Add(-time.Minute))
+	require.NoError(t, a.Create(sessA))
+	require.NoError(t, b.Create(sessB))
+
+	require.NoError(t, a.RevokeUser("42", time.Hour))
+	assert.True(t, mr.Exists("a:revoked:42"))
+	assert.False(t, mr.Exists("revoked:42"))
+
+	_, err := a.Read(sessA.Token)
+	assert.ErrorIs(t, err, sessions.ErrSessionNotFound)
+	_, err = b.Read(sessB.Token)
+	assert.NoError(t, err, "revoking in one namespace must not touch another")
+}
+
+func TestRedisStore_RevocationExpires(t *testing.T) {
+	s, mr := newTestRedis(t)
+	require.NoError(t, s.RevokeUser("42", time.Minute))
+
+	mr.FastForward(2 * time.Minute)
+	assert.False(t, mr.Exists("revoked:42"))
+}
+
+type nilSafeClaims struct{ jwt.RegisteredClaims }
+
+func TestSubjectOfNilPointerClaims(t *testing.T) {
+	var c *nilSafeClaims
+	assert.Equal(t, "", subjectOf(c), "nil pointer claims must not panic")
+	assert.Equal(t, "42", subjectOf(&nilSafeClaims{jwt.RegisteredClaims{Subject: "42"}}))
+}

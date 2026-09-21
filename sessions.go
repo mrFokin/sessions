@@ -13,10 +13,14 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// ErrSessionNotFound is returned by SessionStore.Read when no session exists
-// for the given refresh token.
 var (
+	// ErrSessionNotFound is returned by SessionStore.Read when no session exists
+	// for the given refresh token.
 	ErrSessionNotFound = errors.New("session not found")
+
+	// ErrRevokeUnsupported is returned by Sessions.RevokeUser when the
+	// SessionStore does not implement UserRevoker.
+	ErrRevokeUnsupported = errors.New("session store cannot revoke a user's sessions")
 )
 
 // Sessions manages cookie-based user sessions for an Echo application.
@@ -29,6 +33,13 @@ type Sessions[C jwt.Claims] interface {
 	// Refresh rotates the session using the refresh cookie and redirects 307
 	// to the same-origin path in the *uri route parameter.
 	Refresh(c *echo.Context) error
+	// RevokeUser invalidates every session of the user whose "sub" claim
+	// (Claims.GetSubject) is subject: their refresh tokens stop working at once.
+	// Access tokens already issued stay valid until they expire (accessTimeout).
+	// Sessions started after the call are unaffected, and sessions without a
+	// subject cannot be revoked. It returns ErrRevokeUnsupported if the store
+	// does not implement UserRevoker.
+	RevokeUser(subject string) error
 }
 
 // SessionStore persists sessions keyed by refresh token.
@@ -41,6 +52,14 @@ type SessionStore[C jwt.Claims] interface {
 	Read(refreshToken string) (Session[C], error)
 	// Delete removes a session by refresh token.
 	Delete(refreshToken string) error
+}
+
+// UserRevoker is an optional SessionStore capability: making every session of
+// a subject (the "sub" claim) created up to now unreadable. ttl says how long
+// the revocation must be remembered — the longest a session can live.
+// MemoryStore and RedisStore implement it.
+type UserRevoker interface {
+	RevokeUser(subject string, ttl time.Duration) error
 }
 
 // Device is the client fingerprint captured at session creation.
@@ -113,6 +132,14 @@ func (s *sessions[C]) Start(c *echo.Context, claims C) error {
 		return err
 	}
 	return nil
+}
+
+func (s *sessions[C]) RevokeUser(subject string) error {
+	r, ok := s.Store.(UserRevoker)
+	if !ok {
+		return ErrRevokeUnsupported
+	}
+	return r.RevokeUser(subject, s.RefreshTimeout)
 }
 
 func (s *sessions[C]) Stop(c *echo.Context) error {

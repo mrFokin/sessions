@@ -2,6 +2,7 @@ package store
 
 import (
 	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mrFokin/sessions/v2"
@@ -11,6 +12,7 @@ import (
 // Sessions are lost on process restart and are not shared across instances.
 type MemoryStore[C jwt.Claims] struct {
 	sessions sync.Map
+	revoked  sync.Map // subject -> time.Time of the last RevokeUser
 }
 
 // NewMemoryStore returns an empty MemoryStore.
@@ -33,7 +35,23 @@ func (m *MemoryStore[C]) Read(refreshToken string) (session sessions.Session[C],
 		return
 	}
 	session = val.(sessions.Session[C])
+	if sub := subjectOf(session.Claims); sub != "" {
+		if at, ok := m.revoked.Load(sub); ok && !session.Created.After(at.(time.Time)) {
+			return sessions.Session[C]{}, sessions.ErrSessionNotFound
+		}
+	}
 	return
+}
+
+// RevokeUser makes every session of subject created up to now unreadable.
+// The revocation is kept for the life of the process, so ttl is ignored.
+// It returns ErrEmptySubject for an empty subject.
+func (m *MemoryStore[C]) RevokeUser(subject string, _ time.Duration) error {
+	if subject == "" {
+		return ErrEmptySubject
+	}
+	m.revoked.Store(subject, time.Now())
+	return nil
 }
 
 // Delete removes a session by refresh token.

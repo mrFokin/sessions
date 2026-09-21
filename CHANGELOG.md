@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-21
+
+### Added
+
+- `Sessions.RevokeUser(subject)` invalidates every session of a user (by the `sub` claim) created before the call, e.g. after a password change; sessions started afterwards are unaffected. Access tokens already issued live until they expire
+- `sessions.UserRevoker` — optional `SessionStore` capability behind it, implemented by `MemoryStore` and `RedisStore`; `sessions.ErrRevokeUnsupported` for stores without it; `store.ErrEmptySubject`
+- `RedisStore` records a revocation as `{prefix}revoked:{sub}` with a TTL of the refresh lifetime and compares it with `Session.Created` on `Read` (one extra `GET` per `Read`, no index or key scan)
+
+### Changed
+
+- `Sessions[C]` gained the `RevokeUser` method; custom implementations of that interface (for example test doubles) must add it
+
 ## [2.2.0] - 2026-09-21
 
 ### Added
@@ -41,7 +53,8 @@ Echo v5 and typed claims. For Echo v4 stay on [`v1.0.0`](https://github.com/mrFo
 
 - Custom claim structs without `jwt.MapClaims`, e.g. `sessions.New[*CustomClaims](...)` and `JWTWithRedirect[*CustomClaims]`
 
-[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/mrFokin/sessions/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/mrFokin/sessions/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/mrFokin/sessions/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mrFokin/sessions/compare/v1.0.0...v2.0.0
