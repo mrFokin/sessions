@@ -17,3 +17,12 @@ func ExampleNewRedisStore() {
 	})
 	defer s.Close()
 }
+
+func ExampleWithKeyPrefix() {
+	// Keys become myapp:session:{token}, so other applications sharing this
+	// Redis database cannot read or delete these sessions.
+	s := store.NewRedisStore[jwt.MapClaims](&redis.Options{
+		Addr: "localhost:6379",
+	}, store.WithKeyPrefix("myapp:"))
+	defer s.Close()
+}

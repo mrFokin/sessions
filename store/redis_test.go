@@ -130,3 +130,42 @@ func BenchmarkRedisStore_Delete(b *testing.B) {
 		s.Delete("benchmark-delete-token-" + itoa(i))
 	}
 }
+
+func TestRedisStore_KeyPrefix(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()}, WithKeyPrefix("app:"))
+	t.Cleanup(func() { _ = s.Close() })
+
+	session := testSession("prefixed", time.Minute)
+	require.NoError(t, s.Create(session))
+	assert.True(t, mr.Exists("app:session:"+session.Token))
+	assert.False(t, mr.Exists("session:"+session.Token))
+
+	got, err := s.Read(session.Token)
+	require.NoError(t, err)
+	assert.Equal(t, session.Token, got.Token)
+
+	require.NoError(t, s.Delete(session.Token))
+	assert.False(t, mr.Exists("app:session:"+session.Token))
+}
+
+func TestRedisStore_PrefixesIsolateStores(t *testing.T) {
+	mr := miniredis.RunT(t)
+	a := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()}, WithKeyPrefix("a:"))
+	b := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()}, WithKeyPrefix("b:"))
+	plain := NewRedisStore[jwt.MapClaims](&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close(); _ = plain.Close() })
+
+	session := testSession("shared-token", time.Minute)
+	require.NoError(t, a.Create(session))
+
+	_, err := b.Read(session.Token)
+	assert.ErrorIs(t, err, sessions.ErrSessionNotFound)
+	_, err = plain.Read(session.Token)
+	assert.ErrorIs(t, err, sessions.ErrSessionNotFound)
+
+	// Deleting through another store's namespace must not touch a's session.
+	require.NoError(t, b.Delete(session.Token))
+	_, err = a.Read(session.Token)
+	assert.NoError(t, err)
+}
