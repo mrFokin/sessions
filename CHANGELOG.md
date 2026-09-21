@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-21
+
+### Added
+
+- `sessions.WithNextParam()` option for `JWTWithRedirect`: the original request URI travels in the `next` query parameter (`/auth/refresh?next=%2Fapi%2Frpc%3Fq%3D1`), so the refresh route is a plain `POST /auth/refresh` with no wildcard and the query string of the original request survives the round trip. The option is off by default, so existing setups keep the path form (`/auth/refresh/api/rpc`)
+- `Sessions.Refresh` reads `next` when present
+
+### Fixed
+
+- `Refresh` on a legacy `/auth/refresh/*uri` route always redirected to `/`: it read the path parameter `uri`, but Echo names any wildcard `*` (v4 and v5 alike), so the original path was lost and clients got 404 after a refresh. It now reads `*` (falling back to `uri` for hand-built contexts). Tests now run the refresh through a real router, which is how this went unnoticed before
+
 ## [2.3.0] - 2026-09-21
 
 ### Added
@@ -53,7 +64,8 @@ Echo v5 and typed claims. For Echo v4 stay on [`v1.0.0`](https://github.com/mrFo
 
 - Custom claim structs without `jwt.MapClaims`, e.g. `sessions.New[*CustomClaims](...)` and `JWTWithRedirect[*CustomClaims]`
 
-[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/mrFokin/sessions/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mrFokin/sessions/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/mrFokin/sessions/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/mrFokin/sessions/compare/v2.0.0...v2.1.0

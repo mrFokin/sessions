@@ -305,6 +305,31 @@ func TestRedirectPath(t *testing.T) {
 	}
 }
 
+func TestNextPath(t *testing.T) {
+	testCases := []struct {
+		next string
+		want string
+		err  error
+	}{
+		{next: "/api", want: "/api"},
+		{next: "/api/rpc?q=1&x=%2F", want: "/api/rpc?q=1&x=%2F"},
+		{next: "/api/../x", want: "/x"},
+		{next: "/api/", want: "/api"},
+		{next: "/%2F%2Fevil.com", want: "/evil.com"},
+		{next: "api", err: echo.ErrBadRequest},
+		{next: "//evil.com", err: echo.ErrBadRequest},
+		{next: `/\evil.com`, err: echo.ErrBadRequest},
+		{next: "https://evil.com", err: echo.ErrBadRequest},
+		{next: "/%zz", err: echo.ErrBadRequest},
+	}
+
+	for _, tc := range testCases {
+		got, err := nextPath(tc.next)
+		assert.Equal(t, tc.err, err, "next=%q", tc.next)
+		assert.Equal(t, tc.want, got, "next=%q", tc.next)
+	}
+}
+
 func TestRefresh(t *testing.T) {
 	testCases := []struct {
 		when     string

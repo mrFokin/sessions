@@ -72,14 +72,14 @@ func main() {
         return c.JSON(200, map[string]string{"status": "ok"})
     })
     
-    e.POST("/auth/refresh/*uri", sessionManager.Refresh)
+    e.POST("/auth/refresh", sessionManager.Refresh)
     
     e.POST("/auth/logout", func(c *echo.Context) error {
         return sessionManager.Stop(c)
     })
     
     protected := e.Group("/api")
-    protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", []byte("your-secret-key")))
+    protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", []byte("your-secret-key"), sessions.WithNextParam()))
     protected.GET("/profile", func(c *echo.Context) error {
         user, _ := echo.ContextGet[*jwt.Token](c, "user")
         claims := user.Claims.(jwt.MapClaims)
@@ -119,9 +119,9 @@ sessionManager := sessions.New(
 
 The library is built for JSON-RPC over HTTP with cookies, not REST with query/fragment.
 
-- The RPC method is in the request body. The URL is the endpoint. After refresh, `Location` is only the same-origin path from `*uri` (`url.Parse`, no host and no `//`). Otherwise 400, and the session is not rotated. Query, fragment, and trailing slash are not restored.
+- The RPC method is in the request body. The URL is the endpoint. After refresh, `Location` is only the same-origin path from `next` (`url.Parse`, no host and no `//`). Otherwise 400, and the session is not rotated. With `WithNextParam` the query string of the original request is kept; the fragment is never sent to the server, and a trailing slash is not restored. The legacy wildcard form (`/auth/refresh/*uri`) drops the query as well.
 - `JWTWithRedirect` responds **307**. The client must follow the redirect, keep method and body, and send cookies (`credentials`). A transport without a cookie jar or without follow-redirect will not get automatic refresh.
-- Mount refresh as **POST** `/…/auth/refresh/*uri`. A 307 from a JSON-RPC POST would otherwise get 405 on a GET route.
+- Mount refresh as **POST** `/…/auth/refresh` (with `WithNextParam`) or `/…/auth/refresh/*uri` (legacy). A 307 from a JSON-RPC POST would otherwise get 405 on a GET route.
 - Cookie `session` has Path `{prefix}/auth`, so the refresh URL must be under that path — otherwise the refresh token is not sent.
 - Cookie `access` TTL matches JWT `exp`: the browser does not send an expired access cookie. Refresh is triggered by a missing cookie (`ErrJWTMissing`), not by parsing an expired JWT.
 
@@ -174,19 +174,20 @@ err := sessionManager.Stop(c)
 Rotates the expired access token using the refresh token.
 
 **Parameters:**
-- Expects path parameter `*uri` — the path to redirect to after refresh (tail of the original URL)
+- Expects query parameter `next` — the original request URI to return to after refresh (see `WithNextParam`). Without it, falls back to the wildcard of a legacy `/auth/refresh/*uri` route (Echo names any wildcard `*`, whatever the route calls it)
 
 **Behavior:**
 - Requires a refresh token in cookie `session`
 - Loads the session from the store; `ErrSessionNotFound` → 401
-- Normalizes `*uri` to a same-origin path; otherwise 400 without rotating the session
+- Normalizes `next` (or the wildcard) to a same-origin path; otherwise 400 without rotating the session
 - Checks refresh token expiry
 - Creates a new session with a copy of claims, then deletes the old one
 - Redirects 307 to the normalized path
 
 **Route:**
 ```go
-e.POST("/auth/refresh/*uri", sessionManager.Refresh)
+e.POST("/auth/refresh", sessionManager.Refresh) // with sessions.WithNextParam()
+// legacy: e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 ```
 
 #### `RevokeUser(subject string) error`
@@ -285,19 +286,20 @@ A store that can make every session of a subject (`sub`) created up to now unrea
 
 ### Middleware
 
-#### `JWTWithRedirect[C jwt.Claims](path string, secret []byte) echo.MiddlewareFunc`
+#### `JWTWithRedirect[C jwt.Claims](path string, secret []byte, opts ...RedirectOption) echo.MiddlewareFunc`
 
 Middleware that protects routes and redirects to token refresh.
 
 **Parameters:**
 - `path` — full redirect path (include the prefix if needed)
 - `secret` — JWT verification key
+- `opts` — `WithNextParam()` puts the original URI into `?next=` instead of appending it to the path, so the refresh route needs no wildcard
 - type `C` — claims; a new instance is created per request
 
 **Behavior:**
 - Checks the access token from the cookie
 - If the token is valid — continues
-- If the token is missing or invalid — redirects to `{path}{current URI}`
+- If the token is missing — redirects to `{path}{current URI}`, or to `{path}?next={escaped current URI}` with `WithNextParam()`
 
 **Examples:**
 
@@ -307,8 +309,10 @@ api := e.Group("/api")
 api.Use(sessions.JWTWithRedirect[jwt.MapClaims](
     "/auth/refresh",      // refresh path
     []byte("secret-key"),
+    sessions.WithNextParam(),
 ))
-// Redirect: /auth/refresh/api/profile
+// Redirect: /auth/refresh?next=%2Fapi%2Fprofile
+// Without the option (legacy): /auth/refresh/api/profile
 ```
 
 Prefix `/api`:
@@ -317,8 +321,9 @@ api := e.Group("/api")
 api.Use(sessions.JWTWithRedirect[jwt.MapClaims](
     "/api/auth/refresh",  // full path with prefix
     []byte("secret-key"),
+    sessions.WithNextParam(),
 ))
-// Redirect: /api/auth/refresh/api/profile
+// Redirect: /api/auth/refresh?next=%2Fapi%2Fprofile
 ```
 
 ## Data types
@@ -571,7 +576,7 @@ go tool cover -html=coverage.out
 - Check that the refresh token exists in the store
 - Check that the refresh token has not expired
 - Check the path for cookie `session` — it must be `{prefix}/auth`
-- The refresh handler must be `POST /…/auth/refresh/*uri`
+- The refresh handler must be `POST /…/auth/refresh` when you use `WithNextParam()`, or `POST /…/auth/refresh/*uri` without it — the route must match the form the middleware redirects to
 
 ### Redis connection errors
 
