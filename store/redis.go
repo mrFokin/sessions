@@ -17,16 +17,39 @@ const redisOpTimeout = 3 * time.Second
 // is not in the future.
 var ErrNonPositiveTTL = errors.New("session ttl must be positive")
 
-// RedisStore is a Redis-backed SessionStore. Keys are session:{token} with TTL
-// until Session.Expired.
+// RedisStore is a Redis-backed SessionStore. Keys are {prefix}session:{token}
+// (no prefix unless WithKeyPrefix is given) with TTL until Session.Expired.
 type RedisStore[C jwt.Claims] struct {
 	client *redis.Client
+	prefix string
+}
+
+// redisConfig collects the settings a RedisOption can change.
+type redisConfig struct {
+	prefix string
+}
+
+// RedisOption configures a RedisStore.
+type RedisOption func(*redisConfig)
+
+// WithKeyPrefix prepends prefix to every key the store writes, so several
+// applications can share one Redis database without seeing each other's
+// sessions (and so an ACL rule like ~myapp:* can fence each of them in).
+// The prefix is used verbatim — include the separator yourself:
+// WithKeyPrefix("myapp:") gives myapp:session:{token}. Default: no prefix.
+func WithKeyPrefix(prefix string) RedisOption {
+	return func(c *redisConfig) { c.prefix = prefix }
 }
 
 // NewRedisStore returns a RedisStore using opt. Call Close when finished.
-func NewRedisStore[C jwt.Claims](opt *redis.Options) *RedisStore[C] {
+func NewRedisStore[C jwt.Claims](opt *redis.Options, opts ...RedisOption) *RedisStore[C] {
+	var cfg redisConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	return &RedisStore[C]{
 		client: redis.NewClient(opt),
+		prefix: cfg.prefix,
 	}
 }
 
@@ -39,8 +62,8 @@ func (s *RedisStore[C]) ctx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), redisOpTimeout)
 }
 
-func sessionKey(token string) string {
-	return "session:" + token
+func (s *RedisStore[C]) key(token string) string {
+	return s.prefix + "session:" + token
 }
 
 // Create stores session in Redis. It returns ErrNonPositiveTTL when
@@ -59,7 +82,7 @@ func (s *RedisStore[C]) Create(session sessions.Session[C]) error {
 		return ErrNonPositiveTTL
 	}
 
-	return s.client.Set(ctx, sessionKey(session.Token), data, ttl).Err()
+	return s.client.Set(ctx, s.key(session.Token), data, ttl).Err()
 }
 
 // Read loads a session by refresh token.
@@ -68,7 +91,7 @@ func (s *RedisStore[C]) Read(refreshToken string) (session sessions.Session[C], 
 	ctx, cancel := s.ctx()
 	defer cancel()
 
-	data, err := s.client.Get(ctx, sessionKey(refreshToken)).Bytes()
+	data, err := s.client.Get(ctx, s.key(refreshToken)).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			err = sessions.ErrSessionNotFound
@@ -88,5 +111,5 @@ func (s *RedisStore[C]) Read(refreshToken string) (session sessions.Session[C], 
 func (s *RedisStore[C]) Delete(refreshToken string) error {
 	ctx, cancel := s.ctx()
 	defer cancel()
-	return s.client.Del(ctx, sessionKey(refreshToken)).Err()
+	return s.client.Del(ctx, s.key(refreshToken)).Err()
 }

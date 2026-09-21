@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-21
+
+### Added
+
+- `store.WithKeyPrefix` option for `NewRedisStore`, so applications sharing one Redis database keep separate session namespaces (`{prefix}session:{token}`). Without it the key format is unchanged
+
 ## [2.1.0] - 2026-09-09
 
 ### Added
@@ -35,6 +41,7 @@ Echo v5 and typed claims. For Echo v4 stay on [`v1.0.0`](https://github.com/mrFo
 
 - Custom claim structs without `jwt.MapClaims`, e.g. `sessions.New[*CustomClaims](...)` and `JWTWithRedirect[*CustomClaims]`
 
-[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/mrFokin/sessions/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/mrFokin/sessions/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mrFokin/sessions/compare/v1.0.0...v2.0.0

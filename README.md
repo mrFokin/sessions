@@ -400,6 +400,15 @@ defer redisStore.Close()
 session:{refresh-token-uuid}
 ```
 
+**Sharing one Redis between applications.** Applications that share a Redis database also share one session namespace: a refresh token issued by one app is accepted by another. Separate them with `WithKeyPrefix` (or give each app its own `DB`):
+```go
+redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
+    Addr: "localhost:6379",
+}, store.WithKeyPrefix("myapp:"))
+defer redisStore.Close()
+```
+The prefix is used verbatim, so include the separator yourself: keys become `myapp:session:{refresh-token-uuid}`, and a Redis ACL can confine the app to `~myapp:*`. Without the option the key format is unchanged, so existing sessions stay valid.
+
 ## Security
 
 ### Recommendations
