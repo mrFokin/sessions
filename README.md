@@ -189,6 +189,24 @@ Rotates the expired access token using the refresh token.
 e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 ```
 
+#### `RevokeUser(subject string) error`
+
+Revokes every session of a user — for example after a password change. The user is identified by the standard `sub` claim (`Claims.GetSubject()`), so put it into the claims you pass to `Start`, e.g. `jwt.MapClaims{"sub": "42", "user_id": 42}`.
+
+**Behavior:**
+- Refresh tokens of all the user's sessions created before the call stop working: `Refresh` answers 401
+- Sessions started after the call (for example a login with the new password) and other users' sessions are unaffected
+- Access tokens already issued stay valid until they expire (`accessTimeout`); the library does not revoke them, so keep `accessTimeout` short
+- Sessions without a `sub` claim cannot be revoked
+- Returns `ErrRevokeUnsupported` if the store does not implement `UserRevoker` (`MemoryStore` and `RedisStore` do)
+
+```go
+// after user 42 successfully changed their password
+if err := sessionManager.RevokeUser("42"); err != nil {
+    return err
+}
+```
+
 ### Constructors
 
 #### `New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore[C]) Sessions[C]`
@@ -254,6 +272,16 @@ Loads a session by refresh token.
 #### `Delete(refreshToken string) error`
 
 Deletes a session from the store.
+
+#### `UserRevoker` (optional)
+
+```go
+type UserRevoker interface {
+    RevokeUser(subject string, ttl time.Duration) error
+}
+```
+
+A store that can make every session of a subject (`sub`) created up to now unreadable. `ttl` is how long to remember the revocation (`Sessions.RevokeUser` passes the refresh lifetime). Without this interface `Sessions.RevokeUser` returns `ErrRevokeUnsupported`.
 
 ### Middleware
 
@@ -407,6 +435,8 @@ redisStore := store.NewRedisStore[jwt.MapClaims](&redis.Options{
 }, store.WithKeyPrefix("myapp:"))
 defer redisStore.Close()
 ```
+`RevokeUser` does not scan or delete keys in Redis: it writes a timestamp to `{prefix}revoked:{sub}` with a TTL equal to the refresh lifetime, and `Read` compares it with `Session.Created`. The cost is one extra `GET` per `Read`. Revoked sessions stay in Redis until their own TTL, but can no longer be read.
+
 The prefix is used verbatim, so include the separator yourself: keys become `myapp:session:{refresh-token-uuid}`, and a Redis ACL can confine the app to `~myapp:*`. Without the option the key format is unchanged, so existing sessions stay valid.
 
 ## Security

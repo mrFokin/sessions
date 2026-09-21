@@ -342,3 +342,34 @@ func BenchmarkMemoryStore_ConcurrentRead(b *testing.B) {
 		}
 	})
 }
+
+func TestMemoryStore_RevokeUser(t *testing.T) {
+	m := NewMemoryStore[jwt.MapClaims]()
+	now := time.Now()
+	mk := func(token, sub string, created time.Time) sessions.Session[jwt.MapClaims] {
+		return sessions.Session[jwt.MapClaims]{
+			Token:   token,
+			Claims:  jwt.MapClaims{"sub": sub},
+			Created: created,
+			Expired: now.Add(time.Hour),
+		}
+	}
+	old := mk("old", "42", now.Add(-time.Minute))
+	other := mk("other", "7", now.Add(-time.Minute))
+	assert.NoError(t, m.Create(old))
+	assert.NoError(t, m.Create(other))
+
+	assert.NoError(t, m.RevokeUser("42", time.Hour))
+
+	_, err := m.Read(old.Token)
+	assert.ErrorIs(t, err, sessions.ErrSessionNotFound)
+	_, err = m.Read(other.Token)
+	assert.NoError(t, err)
+
+	fresh := mk("fresh", "42", time.Now().Add(time.Minute))
+	assert.NoError(t, m.Create(fresh))
+	_, err = m.Read(fresh.Token)
+	assert.NoError(t, err)
+
+	assert.ErrorIs(t, m.RevokeUser("", time.Hour), ErrEmptySubject)
+}
