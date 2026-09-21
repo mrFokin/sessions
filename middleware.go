@@ -33,7 +33,7 @@ func WithNextParam() RedirectOption {
 //
 // path is the refresh URL including any prefix (for example /auth/refresh or
 // /api/auth/refresh). C is allocated per request as the JWT claims type.
-// A present but invalid token is not redirected; the JWT error is returned.
+// A present but invalid token is not redirected; it gets 401 ("invalid or expired jwt").
 func JWTWithRedirect[C jwt.Claims](path string, secret []byte, opts ...RedirectOption) echo.MiddlewareFunc {
 	var cfg redirectConfig
 	for _, o := range opts {
@@ -57,7 +57,9 @@ func JWTWithRedirect[C jwt.Claims](path string, secret []byte, opts ...RedirectO
 				}
 				return c.Redirect(http.StatusTemporaryRedirect, path+uri)
 			}
-			return err
+			// A malformed or wrongly signed token is a client error. Returned as is,
+			// the raw parse error is not an *echo.HTTPError and would surface as 500.
+			return echojwt.ErrJWTInvalid.Wrap(err)
 		},
 	})
 }

@@ -104,3 +104,21 @@ func TestRefreshRejectsForeignNext(t *testing.T) {
 	rec := post(e, "/auth/refresh?next=%2Fapi%2Frpc", token)
 	assert.Equal(t, http.StatusTemporaryRedirect, rec.Code)
 }
+
+func TestInvalidAccessIsUnauthorized(t *testing.T) {
+	e, _ := refreshApp(t, "/auth/refresh", sessions.WithNextParam())
+
+	// a token signed with another key, and one that is not a JWT at all
+	foreign, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "1"}).SignedString([]byte("other-secret"))
+	require.NoError(t, err)
+
+	for name, token := range map[string]string{"garbage": "garbage", "foreign signature": foreign} {
+		req := httptest.NewRequest(http.MethodPost, "/api/rpc", nil)
+		req.AddCookie(&http.Cookie{Name: "access", Value: token})
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, name)
+		assert.Empty(t, rec.Header().Get("Location"), "%s must not be redirected to refresh", name)
+	}
+}

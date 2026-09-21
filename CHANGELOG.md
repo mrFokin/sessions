@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-09-21
+
+### Fixed
+
+- `JWTWithRedirect` answered 500 for a malformed or wrongly signed access cookie: it returned the raw JWT parse error, which is not an `*echo.HTTPError`. It now returns 401 (`echojwt.ErrJWTInvalid`, "invalid or expired jwt") and still does not redirect to refresh
+
 ## [2.4.0] - 2026-09-21
 
 ### Added
@@ -64,7 +70,8 @@ Echo v5 and typed claims. For Echo v4 stay on [`v1.0.0`](https://github.com/mrFo
 
 - Custom claim structs without `jwt.MapClaims`, e.g. `sessions.New[*CustomClaims](...)` and `JWTWithRedirect[*CustomClaims]`
 
-[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/mrFokin/sessions/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/mrFokin/sessions/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mrFokin/sessions/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/mrFokin/sessions/compare/v2.1.0...v2.2.0
