@@ -192,6 +192,24 @@ err := sessionManager.Stop(c)
 e.POST("/auth/refresh/*uri", sessionManager.Refresh)
 ```
 
+#### `RevokeUser(subject string) error`
+
+Отзывает все сессии пользователя — например, после смены пароля. Пользователь определяется по стандартному claim `sub` (его нужно положить в claims при `Start`, например `jwt.MapClaims{"sub": "42", "user_id": 42}`).
+
+**Поведение:**
+- Refresh-токены всех сессий этого пользователя, созданных до вызова, перестают работать: `Refresh` отвечает 401
+- Сессии, начатые после вызова (например, вход с новым паролем), не затрагиваются, сессии других пользователей тоже
+- Уже выданные access-токены действуют до истечения (`accessTimeout`), их отзыв библиотека не делает — держите `accessTimeout` коротким
+- Сессии без claim `sub` отозвать нельзя
+- Если хранилище не реализует `UserRevoker`, возвращает `ErrRevokeUnsupported` (Memory и Redis реализуют)
+
+```go
+// после успешной смены пароля пользователя 42
+if err := sessionManager.RevokeUser("42"); err != nil {
+    return err
+}
+```
+
 ### Конструкторы
 
 #### `New(prefix string, secret []byte, accessTimeout time.Duration, refreshTimeout time.Duration, secure bool, store SessionStore) Sessions`
@@ -257,6 +275,16 @@ sessionManager := sessions.New(
 #### `Delete(refreshToken string) error`
 
 Удаляет сессию из хранилища.
+
+#### `UserRevoker` (необязательно)
+
+```go
+type UserRevoker interface {
+    RevokeUser(subject string, ttl time.Duration) error
+}
+```
+
+Хранилище, которое умеет делать нечитаемыми все сессии пользователя (`sub`), созданные до текущего момента. `ttl` — сколько помнить отзыв (`Sessions.RevokeUser` передаёт `refreshTimeout`). Без этого интерфейса `Sessions.RevokeUser` возвращает `ErrRevokeUnsupported`.
 
 ### Middleware
 
@@ -413,6 +441,8 @@ redisStore := store.NewRedisStore(&redis.Options{
 }, store.WithKeyPrefix("myapp:"))
 defer redisStore.Close()
 ```
+Отзыв сессий пользователя (`RevokeUser`) в Redis не перебирает и не удаляет ключи: он пишет метку времени в `{prefix}revoked:{sub}` с TTL, равным `refreshTimeout`, а `Read` сравнивает с ней `Session.Created`. Стоимость — один дополнительный `GET` на каждый `Read`. Отозванные сессии остаются в Redis до своего TTL, но прочитать их уже нельзя.
+
 Префикс подставляется как есть, разделитель нужно указать самому: ключи будут `myapp:session:{refresh-token-uuid}`, а в ACL Redis приложению можно выдать доступ только к `~myapp:*`. Без опции формат ключей не меняется, уже выданные сессии остаются валидными.
 
 ## Безопасность

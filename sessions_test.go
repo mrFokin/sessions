@@ -435,3 +435,32 @@ func TestRefresh(t *testing.T) {
 		}
 	}
 }
+
+// revokingStore is a SessionStore that also supports UserRevoker.
+type revokingStore struct {
+	mockSessionStore
+	subject string
+	ttl     time.Duration
+}
+
+func (r *revokingStore) RevokeUser(subject string, ttl time.Duration) error {
+	r.subject, r.ttl = subject, ttl
+	return nil
+}
+
+func TestRevokeUser(t *testing.T) {
+	t.Run("delegates to the store with the refresh lifetime", func(t *testing.T) {
+		st := &revokingStore{}
+		h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, st)
+
+		assert.NoError(t, h.RevokeUser("42"))
+		assert.Equal(t, "42", st.subject)
+		assert.Equal(t, time.Minute*10, st.ttl)
+	})
+
+	t.Run("store without the capability", func(t *testing.T) {
+		h := New("", []byte("secret"), time.Minute*5, time.Minute*10, true, &mockSessionStore{})
+
+		assert.ErrorIs(t, h.RevokeUser("42"), ErrRevokeUnsupported)
+	})
+}
