@@ -168,7 +168,7 @@ func (s *sessions[C]) Refresh(c *echo.Context) error {
 		return err
 	}
 
-	uri, err := redirectPath(c.Param("uri"))
+	uri, err := refreshTarget(c)
 	if err != nil {
 		return err
 	}
@@ -193,6 +193,46 @@ func (s *sessions[C]) Refresh(c *echo.Context) error {
 	}
 
 	return c.Redirect(http.StatusTemporaryRedirect, uri)
+}
+
+// refreshTarget returns where to send the client after a refresh: the "next"
+// query parameter (see WithNextParam) if present, otherwise the wildcard of a
+// legacy /auth/refresh/*uri route. Echo names any wildcard "*" whatever the
+// route calls it, so "uri" is only a fallback for hand-built contexts.
+func refreshTarget(c *echo.Context) (string, error) {
+	if next := c.QueryParam("next"); next != "" {
+		return nextPath(next)
+	}
+	wildcard := c.Param("*")
+	if wildcard == "" {
+		wildcard = c.Param("uri")
+	}
+	return redirectPath(wildcard)
+}
+
+// nextPath validates the "next" parameter: a same-origin absolute path, no
+// scheme, host, "//" prefix or backslash. The query string is kept, the
+// fragment (never sent to the server) does not exist here.
+func nextPath(next string) (string, error) {
+	if strings.ContainsAny(next, "\\") || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "", echo.ErrBadRequest
+	}
+	u, err := url.Parse(next)
+	if err != nil {
+		return "", echo.ErrBadRequest
+	}
+	if u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil {
+		return "", echo.ErrBadRequest
+	}
+
+	p := path.Clean(u.Path)
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return "", echo.ErrBadRequest
+	}
+	if u.RawQuery != "" {
+		p += "?" + u.RawQuery
+	}
+	return p, nil
 }
 
 func redirectPath(param string) (string, error) {

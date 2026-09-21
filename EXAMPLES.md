@@ -62,11 +62,11 @@ func main() {
     // Публичные роуты
     e.POST("/auth/login", login)
     e.POST("/auth/logout", logout)
-    e.POST("/auth/refresh/*uri", sessionManager.Refresh)
+    e.POST("/auth/refresh", sessionManager.Refresh)
 
     // Защищенные роуты
     api := e.Group("/api")
-    api.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", secret))
+    api.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", secret, sessions.WithNextParam()))
     api.GET("/profile", getProfile)
     api.GET("/dashboard", getDashboard)
 
@@ -194,11 +194,11 @@ func main() {
     api := e.Group("/api")
     api.POST("/auth/login", login)
     api.POST("/auth/logout", logout)
-    api.POST("/auth/refresh/*uri", sessionManager.Refresh)
+    api.POST("/auth/refresh", sessionManager.Refresh)
 
     // Защищенные роуты с префиксом
     protected := api.Group("")
-    protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/api/auth/refresh", secret))
+    protected.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/api/auth/refresh", secret, sessions.WithNextParam()))
     protected.GET("/profile", getProfile)
     protected.GET("/dashboard", getDashboard)
     protected.GET("/users", getUsers)
@@ -289,14 +289,14 @@ func getUsers(c *echo.Context) error {
    - Cookie `session` будет иметь Path: `/api/auth`
 
 2. **URL редиректа:**
-   - При отсутствии токена редирект будет на `/api/auth/refresh{текущий_URI}`
-   - Например, для `/api/profile` редирект на `/api/auth/refresh/api/profile`
+   - При отсутствии токена редирект будет на `/api/auth/refresh?next={текущий_URI}` (с `WithNextParam()`)
+   - Например, для `/api/profile` редирект на `/api/auth/refresh?next=%2Fapi%2Fprofile`
 
 3. **Маршруты:**
    - Все маршруты должны начинаться с префикса `/api`
    - Login: `POST /api/auth/login`
    - Logout: `POST /api/auth/logout`
-   - Refresh: `POST /api/auth/refresh/*uri`
+   - Refresh: `POST /api/auth/refresh`
    - Protected: `GET /api/profile`, `GET /api/dashboard`, etc.
 
 4. **Middleware:**
@@ -587,7 +587,7 @@ func RequireRole(roles ...string) echo.MiddlewareFunc {
 func setupRoutes(e *echo.Echo, secret []byte) {
     // Защищенные роуты с проверкой ролей
     api := e.Group("/api")
-    api.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", secret))
+    api.Use(sessions.JWTWithRedirect[jwt.MapClaims]("/auth/refresh", secret, sessions.WithNextParam()))
 
     // Доступно только админам
     admin := api.Group("/admin")

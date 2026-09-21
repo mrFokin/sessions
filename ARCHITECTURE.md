@@ -95,7 +95,7 @@ type SessionStore[C jwt.Claims] interface {
 ### 3. Middleware
 
 ```go
-func JWTWithRedirect[C jwt.Claims](path string, secret []byte) echo.MiddlewareFunc
+func JWTWithRedirect[C jwt.Claims](path string, secret []byte, opts ...RedirectOption) echo.MiddlewareFunc
 ```
 
 **Назначение:**
