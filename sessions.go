@@ -15,18 +15,37 @@ import (
 
 var (
 	ErrSessionNotFound = errors.New("session not found")
+
+	// ErrRevokeUnsupported is returned by RevokeUser when the SessionStore
+	// does not implement UserRevoker.
+	ErrRevokeUnsupported = errors.New("session store cannot revoke a user's sessions")
 )
 
 type Sessions interface {
 	Start(c echo.Context, claims jwt.MapClaims) error
 	Stop(c echo.Context) error
 	Refresh(c echo.Context) error
+
+	// RevokeUser invalidates every session of the user whose "sub" claim is
+	// subject: their refresh tokens stop working at once. Access tokens already
+	// issued stay valid until they expire (AccessTimeout). Sessions started
+	// after the call are unaffected. It returns ErrRevokeUnsupported if the
+	// store does not implement UserRevoker.
+	RevokeUser(subject string) error
 }
 
 type SessionStore interface {
 	Create(Session) error
 	Read(refreshToken string) (Session, error)
 	Delete(refreshToken string) error
+}
+
+// UserRevoker is an optional SessionStore capability: making every session of
+// a subject (the "sub" claim) created up to now unreadable. ttl says how long
+// the revocation must be remembered — the longest a session can live.
+// Both built-in stores implement it.
+type UserRevoker interface {
+	RevokeUser(subject string, ttl time.Duration) error
 }
 
 type Device struct {
@@ -87,6 +106,14 @@ func (s *sessions) Start(c echo.Context, claims jwt.MapClaims) error {
 		return err
 	}
 	return nil
+}
+
+func (s *sessions) RevokeUser(subject string) error {
+	r, ok := s.Store.(UserRevoker)
+	if !ok {
+		return ErrRevokeUnsupported
+	}
+	return r.RevokeUser(subject, s.RefreshTimeout)
 }
 
 func (s *sessions) Stop(c echo.Context) error {
