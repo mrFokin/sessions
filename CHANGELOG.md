@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-28
+
 ### Fixed
 
 - Requests that hit an expired access token at the same time (typical for an SPA loading several resources) all went to `Refresh` with the same refresh token; the first rotated the session and deleted the old token, so the rest got 401 and the user was logged out. A rotated refresh token now keeps working for 30 seconds and returns the session that replaced it, with a fresh access token, instead of rotating again. After that it is rejected as before
@@ -78,7 +80,8 @@ Echo v5 and typed claims. For Echo v4 stay on [`v1.0.0`](https://github.com/mrFo
 
 - Custom claim structs without `jwt.MapClaims`, e.g. `sessions.New[*CustomClaims](...)` and `JWTWithRedirect[*CustomClaims]`
 
-[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/mrFokin/sessions/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/mrFokin/sessions/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/mrFokin/sessions/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/mrFokin/sessions/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mrFokin/sessions/compare/v2.2.0...v2.3.0
