@@ -159,6 +159,9 @@ func TestStart(t *testing.T) {
 			if assert.NotNil(t, rc, "Отсутствует cookie с refresh-токеном") {
 				assert.Equal(t, tc.refresh.MaxAge, rc.MaxAge)
 				assert.Equal(t, tc.refresh.Secure, rc.Secure)
+				if tc.refresh.Value != "" {
+					assert.Equal(t, tc.refresh.Value, rc.Value)
+				}
 				assert.Equal(t, tc.refresh.Path, rc.Path)
 				assert.Empty(t, rc.Domain)
 			}
@@ -400,8 +403,93 @@ func TestRefresh(t *testing.T) {
 					Expired: time.Now().Add(time.Hour),
 				}
 				m.On("Read", "123456").Return(s, nil)
-				m.On("Delete", "123456").Return(nil)
+				// The rotated session stays as a pointer to its successor for the grace period.
+				m.On("Create", mock.MatchedBy(func(s Session[jwt.MapClaims]) bool {
+					return s.Token == "123456" && s.ReplacedBy != "" && time.Until(s.Expired) <= refreshGrace
+				})).Return(nil)
 				m.On("Create", mock.Anything).Return(nil)
+			},
+		},
+		{
+			when:     "Если заменённую сессию не удалось сохранить, она удаляется",
+			current:  "session=123456",
+			uri:      "api/v2",
+			redirect: "/api/v2",
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				s := Session[jwt.MapClaims]{
+					Token:   "123456",
+					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
+					Expired: time.Now().Add(time.Hour),
+				}
+				m.On("Read", "123456").Return(s, nil)
+				m.On("Create", mock.MatchedBy(func(s Session[jwt.MapClaims]) bool {
+					return s.Token == "123456"
+				})).Return(errors.New("Unknown error"))
+				m.On("Create", mock.Anything).Return(nil)
+				m.On("Delete", "123456").Return(nil)
+			},
+		},
+		{
+			when:     "Заменённая сессия в льготный период отдаёт преемника без новой ротации",
+			current:  "session=123456",
+			uri:      "api/v2",
+			access:   &http.Cookie{MaxAge: 300, Secure: true},
+			refresh:  &http.Cookie{Value: "789", MaxAge: 600, Secure: true},
+			redirect: "/api/v2",
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				m.On("Read", "123456").Return(Session[jwt.MapClaims]{
+					Token:      "123456",
+					Claims:     jwt.MapClaims{"Name": "Jhon Doe"},
+					Expired:    time.Now().Add(10 * time.Second),
+					ReplacedBy: "789",
+				}, nil)
+				m.On("Read", "789").Return(Session[jwt.MapClaims]{
+					Token:   "789",
+					Claims:  jwt.MapClaims{"Name": "Jhon Doe"},
+					Expired: time.Now().Add(time.Hour),
+				}, nil)
+			},
+		},
+		{
+			when:     "Цепочка замен приводит к живой сессии",
+			current:  "session=123456",
+			uri:      "api/v2",
+			refresh:  &http.Cookie{Value: "999", MaxAge: 600, Secure: true},
+			redirect: "/api/v2",
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				m.On("Read", "123456").Return(Session[jwt.MapClaims]{
+					Token: "123456", Expired: time.Now().Add(10 * time.Second), ReplacedBy: "789",
+				}, nil)
+				m.On("Read", "789").Return(Session[jwt.MapClaims]{
+					Token: "789", Expired: time.Now().Add(20 * time.Second), ReplacedBy: "999",
+				}, nil)
+				m.On("Read", "999").Return(Session[jwt.MapClaims]{
+					Token: "999", Claims: jwt.MapClaims{"Name": "Jhon Doe"}, Expired: time.Now().Add(time.Hour),
+				}, nil)
+			},
+		},
+		{
+			when:    "Льготный период заменённой сессии истёк",
+			current: "session=123456",
+			err:     echo.ErrUnauthorized,
+			access:  &http.Cookie{MaxAge: -1, Secure: true},
+			refresh: &http.Cookie{MaxAge: -1, Secure: true},
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				m.On("Read", "123456").Return(Session[jwt.MapClaims]{
+					Token: "123456", Expired: time.Now().Add(-time.Second), ReplacedBy: "789",
+				}, nil)
+				m.On("Delete", "123456").Return(nil)
+			},
+		},
+		{
+			when:    "Преемника заменённой сессии уже нет",
+			current: "session=123456",
+			err:     echo.ErrUnauthorized,
+			initSS: func(m *mockSessionStore[jwt.MapClaims]) {
+				m.On("Read", "123456").Return(Session[jwt.MapClaims]{
+					Token: "123456", Expired: time.Now().Add(10 * time.Second), ReplacedBy: "789",
+				}, nil)
+				m.On("Read", "789").Return(Session[jwt.MapClaims]{}, ErrSessionNotFound)
 			},
 		},
 		{
@@ -487,7 +575,6 @@ func TestRefreshTypedClaims(t *testing.T) {
 	mSessionStore.On("Create", mock.MatchedBy(func(s Session[*mockClaims]) bool {
 		return s.Claims != nil && s.Claims.Name == "Jhon Doe"
 	})).Return(nil)
-	mSessionStore.On("Delete", "123456").Return(nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set(echo.HeaderCookie, "session=123456")

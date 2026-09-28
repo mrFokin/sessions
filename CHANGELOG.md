@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Requests that hit an expired access token at the same time (typical for an SPA loading several resources) all went to `Refresh` with the same refresh token; the first rotated the session and deleted the old token, so the rest got 401 and the user was logged out. A rotated refresh token now keeps working for 30 seconds and returns the session that replaced it, with a fresh access token, instead of rotating again. After that it is rejected as before
+
+### Changed
+
+- `Session` has a new field `ReplacedBy` (the refresh token of the successor; empty for a live session). `Refresh` no longer deletes the rotated session but stores it again through `SessionStore.Create` with `ReplacedBy` set and `Expired` moved to the end of the grace period, so a custom `SessionStore` must let `Create` replace a session with the same `Token` (both built-in stores do). Security note: a stolen refresh token that has just been rotated stays usable for up to 30 seconds
+
 ## [2.4.1] - 2026-09-21
 
 ### Fixed
