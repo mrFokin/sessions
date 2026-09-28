@@ -9,7 +9,7 @@ API reference: [pkg.go.dev/github.com/mrFokin/sessions/v2](https://pkg.go.dev/gi
 ## Features
 
 - JWT authentication — access tokens based on JWT
-- Refresh tokens — automatic session rotation
+- Refresh tokens — automatic session rotation; a just-rotated token keeps working for 30 seconds, so parallel requests with an expired access token don't log the user out
 - Cookie storage — tokens kept in cookies
 - Multiple stores — in-memory and Redis
 - Security — HttpOnly cookies, Secure flags, SameSite

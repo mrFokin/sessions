@@ -32,6 +32,11 @@ type Sessions[C jwt.Claims] interface {
 	Stop(c *echo.Context) error
 	// Refresh rotates the session using the refresh cookie and redirects 307
 	// to the same-origin path in the *uri route parameter.
+	//
+	// The replaced refresh token keeps working for 30 seconds and yields the
+	// session that replaced it rather than rotating again, so requests fired
+	// together with the same expired access token all get the same session
+	// instead of every one but the first being rejected.
 	Refresh(c *echo.Context) error
 	// RevokeUser invalidates every session of the user whose "sub" claim
 	// (Claims.GetSubject) is subject: their refresh tokens stop working at once.
@@ -44,8 +49,10 @@ type Sessions[C jwt.Claims] interface {
 
 // SessionStore persists sessions keyed by refresh token.
 type SessionStore[C jwt.Claims] interface {
-	// Create stores a session. RedisStore requires a positive TTL
-	// (Session.Expired in the future).
+	// Create stores a session, replacing any session with the same Token
+	// (Refresh relies on this to turn a rotated session into a pointer to its
+	// successor). RedisStore requires a positive TTL (Session.Expired in the
+	// future).
 	Create(Session[C]) error
 	// Read loads a session by refresh token.
 	// It returns ErrSessionNotFound if the session does not exist.
@@ -75,7 +82,22 @@ type Session[C jwt.Claims] struct {
 	Device  Device    // client captured at Start
 	Created time.Time // session creation time
 	Expired time.Time // refresh expiry; used as Redis TTL
+
+	// ReplacedBy is the refresh token of the session that replaced this one
+	// in Refresh; empty for a live session. A replaced session is kept only
+	// for the grace period (Expired is moved to its end).
+	ReplacedBy string `json:",omitempty"`
 }
+
+// refreshGrace is how long a replaced refresh token still yields its
+// successor. It covers requests that were already in flight with the old
+// token; a request arriving later than that is treated as a stale token.
+const refreshGrace = 30 * time.Second
+
+// maxReplacedHops bounds how many ReplacedBy links Refresh follows: a token
+// rotated more than once within the grace period still reaches the live
+// session, while a corrupted store can't loop it forever.
+const maxReplacedHops = 5
 
 // New returns a session manager.
 //
@@ -95,6 +117,7 @@ func New[C jwt.Claims](prefix string, secret []byte, accessTimeout time.Duration
 		RefreshTimeout: refreshTimeout,
 		Secure:         secure,
 		Store:          store,
+		refreshGrace:   refreshGrace,
 	}
 }
 
@@ -117,6 +140,8 @@ type sessions[C jwt.Claims] struct {
 	RefreshTimeout time.Duration
 	Secure         bool
 	Store          SessionStore[C]
+
+	refreshGrace time.Duration // a field rather than the constant so tests can shorten it
 }
 
 func (s *sessions[C]) Start(c *echo.Context, claims C) error {
@@ -127,7 +152,7 @@ func (s *sessions[C]) Start(c *echo.Context, claims C) error {
 		}
 	}
 
-	if err := s.start(c, claims); err != nil {
+	if _, err := s.start(c, claims); err != nil {
 		s.clearCookies(c)
 		return err
 	}
@@ -181,18 +206,59 @@ func (s *sessions[C]) Refresh(c *echo.Context) error {
 		return echo.ErrUnauthorized
 	}
 
+	if current.ReplacedBy != "" {
+		live, err := s.successor(current)
+		if err != nil {
+			if errors.Is(err, ErrSessionNotFound) {
+				return echo.ErrUnauthorized
+			}
+			return err
+		}
+		if err := s.issue(c, live); err != nil {
+			return err
+		}
+		return c.Redirect(http.StatusTemporaryRedirect, uri)
+	}
+
 	// TODO Проверить Device
 
-	err = s.start(c, current.Claims)
+	next, err := s.start(c, current.Claims)
 	if err != nil {
 		return err
 	}
 
-	if err := s.Store.Delete(current.Token); err != nil {
-		c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
+	current.ReplacedBy = next.Token
+	current.Expired = time.Now().Add(s.refreshGrace)
+	if err := s.Store.Create(current); err != nil {
+		c.Logger().Info("Sessions.Refresh: Ошибка сохранения заменённой сессии в SessionStore")
+		// Without the grace record the old token must not outlive the rotation.
+		if err := s.Store.Delete(current.Token); err != nil {
+			c.Logger().Info("Sessions.Refresh: Ошибка удаления сессии из SessionStore")
+		}
 	}
 
 	return c.Redirect(http.StatusTemporaryRedirect, uri)
+}
+
+// successor follows the ReplacedBy chain from a replaced session to the live
+// session at its end. It returns ErrSessionNotFound if a link is missing,
+// expired or revoked, or the chain is longer than maxReplacedHops.
+func (s *sessions[C]) successor(replaced Session[C]) (Session[C], error) {
+	current := replaced
+	for range maxReplacedHops {
+		next, err := s.Store.Read(current.ReplacedBy)
+		if err != nil {
+			return Session[C]{}, err
+		}
+		if time.Now().After(next.Expired) {
+			return Session[C]{}, ErrSessionNotFound
+		}
+		if next.ReplacedBy == "" {
+			return next, nil
+		}
+		current = next
+	}
+	return Session[C]{}, ErrSessionNotFound
 }
 
 // refreshTarget returns where to send the client after a refresh: the "next"
@@ -256,15 +322,15 @@ func redirectPath(param string) (string, error) {
 	return p, nil
 }
 
-func (s *sessions[C]) start(c *echo.Context, claims C) error {
+func (s *sessions[C]) start(c *echo.Context, claims C) (Session[C], error) {
 	claims, err := cloneAndSetExp(claims, time.Now().Add(s.AccessTimeout))
 	if err != nil {
-		return err
+		return Session[C]{}, err
 	}
 
 	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.Secret)
 	if err != nil {
-		return err
+		return Session[C]{}, err
 	}
 
 	session := Session[C]{
@@ -279,6 +345,23 @@ func (s *sessions[C]) start(c *echo.Context, claims C) error {
 	}
 
 	if err := s.Store.Create(session); err != nil {
+		return Session[C]{}, err
+	}
+
+	s.setCookies(c, access, session.Token)
+	return session, nil
+}
+
+// issue sets the cookies of an existing session: its refresh token and a
+// fresh access token for its claims. Nothing is written to the store.
+func (s *sessions[C]) issue(c *echo.Context, session Session[C]) error {
+	claims, err := cloneAndSetExp(session.Claims, time.Now().Add(s.AccessTimeout))
+	if err != nil {
+		return err
+	}
+
+	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.Secret)
+	if err != nil {
 		return err
 	}
 
